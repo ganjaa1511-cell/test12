@@ -669,7 +669,6 @@ fun Ornament(accent: Color = GOLD, modifier: Modifier = Modifier) {
 )
 
 @Composable
-@Composable
 fun StatItem(value: String, label: String, accent: Color, modifier: Modifier = Modifier) {
     Column(modifier, horizontalAlignment=Alignment.CenterHorizontally) {
         Text(value, style=TextStyle(fontFamily=CinzelFamily, fontWeight=FontWeight.Bold,
@@ -946,7 +945,7 @@ fun EntityHero(
             }
             Box(Modifier.clip(RoundedCornerShape(999.dp)).background(L0.copy(alpha=0.55f))){ action() }
         }
-        Column(Modifier.align(Alignment.BottomStart).padding(horizontal=22.dp,bottom=20.dp)) {
+        Column(Modifier.align(Alignment.BottomStart).padding(start=22.dp,end=22.dp,bottom=20.dp)) {
             if(subtitle.isNotBlank()) Text(subtitle.uppercase(),
                 style=Typo.labelLarge.copy(color=accent,letterSpacing=2.sp),
                 modifier=Modifier.padding(bottom=5.dp))
@@ -1573,6 +1572,7 @@ fun NpcScreen(
             // ── Structured DNA fields, one line each ───────────────────────
             LoreSection("ADN du personnage",Icons.Default.Fingerprint,
                 summary=dnaSummary(e.dna, DNA_KEYS + "Lives")){
+                @Composable
                 fun field(key: String, multi: Boolean = false) {
                     LoreField(FIELD_LABELS[key] ?: key, e.dna[key] ?: "",
                         "—", multi=multi){ v ->
@@ -1586,6 +1586,7 @@ fun NpcScreen(
             // ── INERTIA — relation lens fields ─────────────────────────────
             LoreSection("Inertie · Relation",Icons.Default.Sync, accent=TEAL,
                 summary=dnaSummary(e.dna, INERTIA_KEYS + "Facets")){
+                @Composable
                 fun ifield(key: String, multi: Boolean = false) {
                     LoreField(FIELD_LABELS[key] ?: key, e.dna[key] ?: "",
                         "—", multi=multi, accent=TEAL){ v ->
