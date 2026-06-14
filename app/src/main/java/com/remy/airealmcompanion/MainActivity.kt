@@ -284,6 +284,10 @@ class LocalStore(ctx: Context) {
         p.edit().putString(KEY, JSONArray().also { a -> list.forEach { a.put(it.toJson()) } }.toString()).commit()
     }
 
+    var lastOpenedId: String?
+        get() = p.getString("lastOpened", null)
+        set(v) { p.edit().putString("lastOpened", v).apply() }
+
     fun toJson(list: List<Campaign>) = JSONArray().also { a -> list.forEach { a.put(it.toJson()) } }.toString(2)
     fun fromJson(s: String) = runCatching {
         val a = JSONArray(s); buildList { for (i in 0 until a.length()) add(a.getJSONObject(i).toCampaign()) }
@@ -472,6 +476,7 @@ class MainActivity : ComponentActivity() {
                         drawCircle(GOLD.copy(alpha=a), 0.8f, Offset(fx, fy))
                     }
                 }) {
+                    EmberDust(Modifier.fillMaxSize())
                     CompanionApp()
                     NoticeHost(Modifier.align(Alignment.BottomCenter))
                 }
@@ -502,7 +507,9 @@ fun CompanionApp() {
     val scope = rememberCoroutineScope()
     var campaigns by remember { mutableStateOf(store.load()) }
     var screen    by remember { mutableStateOf<Screen>(Screen.Campaigns) }
+    var lastOpenedId by remember { mutableStateOf(store.lastOpenedId) }
     fun persist(next: List<Campaign>) { campaigns = next; scope.launch { store.save(next) } }
+    fun openCampaign(id: String) { store.lastOpenedId = id; lastOpenedId = id; screen = Screen.Campaign(id) }
 
     // System back gesture navigates up instead of closing the app
     BackHandler(enabled = screen != Screen.Campaigns) {
@@ -548,7 +555,8 @@ fun CompanionApp() {
     }, label = "nav") { s ->
         when (s) {
             is Screen.Campaigns -> CampaignListScreen(campaigns,
-                onOpen   = { screen = Screen.Campaign(it.id) },
+                onOpen   = { openCampaign(it.id) },
+                lastOpened = campaigns.firstOrNull { it.id == lastOpenedId },
                 onOpenNpcById = { cid, nid -> screen = Screen.NpcDetail(cid, nid) },
                 onOpenLocById = { cid, lid -> screen = Screen.LocDetail(cid, lid) },
                 onAdd    = { n -> persist(listOf(Campaign(name = n.ifBlank{"Nouvelle campagne"})) + campaigns) },
@@ -1259,6 +1267,7 @@ fun AddSheet(label: String, hint: String, accent: Color, onDismiss: ()->Unit, on
 fun CampaignListScreen(
     campaigns: List<Campaign>,
     onOpen: (Campaign)->Unit,
+    lastOpened: Campaign? = null,
     onOpenNpcById: (String,String)->Unit, onOpenLocById: (String,String)->Unit,
     onAdd: (String)->Unit,
     onEdit: (Campaign)->Unit, onDelete: (Campaign)->Unit,
@@ -1319,9 +1328,16 @@ fun CampaignListScreen(
                                 Spacer(Modifier.height(4.dp))
                                 // Title with soft glow behind
                                 Box{
+                                    // Breathing halo — opacity drifts slowly 0.10→0.22
+                                    val breathe = rememberInfiniteTransition(label="halo")
+                                    val haloA by breathe.animateFloat(
+                                        initialValue=0.10f, targetValue=0.24f,
+                                        animationSpec=infiniteRepeatable(
+                                            tween(5500, easing=FastOutSlowInEasing),
+                                            repeatMode=RepeatMode.Reverse), label="haloA")
                                     Text("Codex",style=Typo.displayMedium.copy(
-                                        color=GOLD_HI.copy(alpha=0.25f), fontSize=44.sp),
-                                        modifier=Modifier.offset(y=1.dp).blur(16.dp))
+                                        color=GOLD_HI.copy(alpha=haloA), fontSize=44.sp),
+                                        modifier=Modifier.offset(y=1.dp).blur(22.dp))
                                     Text("Codex",style=Typo.displayMedium.copy(color=GOLD_HI, fontSize=44.sp))
                                 }
                                 Spacer(Modifier.height(8.dp))
@@ -1367,6 +1383,12 @@ fun CampaignListScreen(
             }
 
             if (query.isBlank()) {
+                // "Reprendre" — quick resume of last opened campaign
+                if (lastOpened != null && campaigns.size > 1) {
+                    item(key="continue") {
+                        ContinueCard(lastOpened, Modifier.animateItem()){ onOpen(lastOpened) }
+                    }
+                }
                 items(campaigns,key={it.id}){c->
                     Box(Modifier.animateItem()) {
                         CampaignCard(c,{onOpen(c)},{editTarget=c},{delTarget=c})
@@ -2691,6 +2713,97 @@ fun NpcChoiceSheet(onDismiss: ()->Unit, onImport: ()->Unit, onBlank: ()->Unit) {
                 Icon(Icons.Default.ChevronRight, null, Modifier.size(20.dp), tint=T4)
             }
             Spacer(Modifier.height(8.dp))
+        }
+    }
+}
+
+
+// ─────────────────────────────────────────────────────────────────────────────
+// "REPRENDRE" — quick-resume card for the last opened campaign
+// ─────────────────────────────────────────────────────────────────────────────
+
+@Composable
+fun ContinueCard(c: Campaign, modifier: Modifier = Modifier, onOpen: ()->Unit) {
+    val seal = sealHue(c.name)
+    Column(modifier.fillMaxWidth().padding(horizontal=16.dp, vertical=8.dp)) {
+        // eyebrow
+        Row(verticalAlignment=Alignment.CenterVertically, horizontalArrangement=Arrangement.spacedBy(6.dp),
+            modifier=Modifier.padding(start=4.dp, bottom=8.dp)){
+            Icon(Icons.Default.History, null, Modifier.size(12.dp), tint=GOLD_MID)
+            Text("REPRENDRE", style=Typo.labelMedium.copy(color=GOLD_MID))
+        }
+        Box(Modifier.fillMaxWidth().height(96.dp)
+            .floatingSurface(RoundedCornerShape(20.dp), glow=seal, elevation=16.dp, fill=L2)
+            .border(1.dp, Brush.horizontalGradient(listOf(seal.copy(alpha=0.4f), L5.copy(alpha=0.3f))),
+                RoundedCornerShape(20.dp))
+            .pressable(onClickLabel="Reprendre ${c.name}"){onOpen()}){
+            // cover photo or monogram
+            if (c.photoUri != null) {
+                AsyncImage(
+                    model=ImageRequest.Builder(LocalContext.current).data(File(c.photoUri)).crossfade(true).build(),
+                    contentDescription=null, contentScale=ContentScale.Crop,
+                    modifier=Modifier.fillMaxSize().clip(RoundedCornerShape(20.dp)).alpha(0.5f))
+                Box(Modifier.fillMaxSize().background(Brush.horizontalGradient(
+                    listOf(L2.copy(alpha=0.95f), L2.copy(alpha=0.55f)))))
+            } else {
+                EngravedMonogram(c.name.take(1).uppercase(), seal, 80.sp,
+                    Modifier.align(Alignment.CenterEnd).padding(end=20.dp), baseAlpha=0.16f)
+            }
+            Row(Modifier.fillMaxSize().padding(horizontal=20.dp),
+                verticalAlignment=Alignment.CenterVertically){
+                Column(Modifier.weight(1f)){
+                    Text(c.name, style=Typo.headlineSmall.copy(color=T1), maxLines=1, overflow=TextOverflow.Ellipsis)
+                    Text("${c.npcs.size} personnages · ${c.locations.size} lieu${if(c.locations.size>1)"x" else ""}",
+                        style=Typo.bodySmall.copy(color=T3), modifier=Modifier.padding(top=2.dp))
+                }
+                Box(Modifier.size(40.dp).clip(CircleShape).background(seal.copy(alpha=0.18f)),
+                    contentAlignment=Alignment.Center){
+                    Icon(Icons.Default.PlayArrow, "Reprendre", Modifier.size(20.dp), tint=GOLD_HI)
+                }
+            }
+        }
+    }
+}
+
+
+// ─────────────────────────────────────────────────────────────────────────────
+// EMBER DUST — slow rising copper motes. Very subtle, premium, not a screensaver.
+// ─────────────────────────────────────────────────────────────────────────────
+
+private class Ember(
+    val x: Float, val size: Float, val speed: Float, val phase: Float, val drift: Float, val maxA: Float
+)
+
+@Composable
+fun EmberDust(modifier: Modifier = Modifier) {
+    val embers = remember {
+        val rnd = java.util.Random(42)
+        List(14) {
+            Ember(
+                x = rnd.nextFloat(),
+                size = 1.2f + rnd.nextFloat() * 2.3f,
+                speed = 0.012f + rnd.nextFloat() * 0.022f,
+                phase = rnd.nextFloat(),
+                drift = (rnd.nextFloat() - 0.5f) * 0.04f,
+                maxA = 0.05f + rnd.nextFloat() * 0.09f
+            )
+        }
+    }
+    val t = rememberInfiniteTransition(label="ember")
+    val clock by t.animateFloat(0f, 1f,
+        infiniteRepeatable(tween(60000, easing=LinearEasing), RepeatMode.Restart), label="emberClock")
+    Canvas(modifier) {
+        embers.forEach { e ->
+            // progress rises from bottom (1) to top (0), looping
+            val p = (e.phase + clock / (e.speed * 60f)) % 1f
+            val y = (1f - p) * size.height
+            val x = (e.x + e.drift * kotlin.math.sin(p * 6.28f)) * size.width
+            // fade in/out at the ends
+            val edge = kotlin.math.min(p, 1f - p) * 4f
+            val a = e.maxA * edge.coerceIn(0f, 1f)
+            if (a > 0.003f) {
+                drawCircle(GOLD_HI.copy(alpha = a), e.size, Offset(x, y))
+            }
         }
     }
 }
