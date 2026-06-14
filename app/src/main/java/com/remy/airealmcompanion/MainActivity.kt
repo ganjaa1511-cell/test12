@@ -22,6 +22,16 @@ import androidx.compose.foundation.shape.*
 import androidx.compose.foundation.LocalIndication
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsPressedAsState
+import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.gestures.detectTransformGestures
+import androidx.compose.animation.core.animateIntAsState
+import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.foundation.lazy.grid.GridCells
+import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
+import androidx.compose.foundation.lazy.grid.items as gridItems
+import androidx.compose.foundation.pager.HorizontalPager
+import androidx.compose.foundation.pager.rememberPagerState
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.ui.semantics.heading
 import androidx.compose.ui.semantics.semantics
@@ -88,28 +98,28 @@ private val AlegreyaFamily = FontFamily(
 // TOKENS
 // ─────────────────────────────────────────────────────────────────────────────
 
-private val L0 = Color(0xFF080604)
-private val L1 = Color(0xFF0D0B08)
-private val L2 = Color(0xFF161210)
-private val L3 = Color(0xFF1E1A16)
-private val L4 = Color(0xFF27221C)
-private val L5 = Color(0xFF332D25)
-private val L6 = Color(0xFF453D30)
+private val L0 = Color(0xFF0A0908)   // void
+private val L1 = Color(0xFF121110)   // bg — neutral warm charcoal
+private val L2 = Color(0xFF1B1917)   // cards
+private val L3 = Color(0xFF232020)   // raised
+private val L4 = Color(0xFF2D2A28)   // inputs
+private val L5 = Color(0xFF3A3633)   // border subtle
+private val L6 = Color(0xFF4D4845)   // border visible
 
-private val GOLD_HI   = Color(0xFFEEC85A)
-private val GOLD      = Color(0xFFCCA040)
-private val GOLD_MID  = Color(0xFF886820)
-private val GOLD_DIM  = Color(0xFF3A2C0C)
+private val GOLD_HI   = Color(0xFFE89B6C)   // copper highlight
+private val GOLD      = Color(0xFFD17A4E)   // terracotta — primary
+private val GOLD_MID  = Color(0xFF9E5A3A)   // copper mid
+private val GOLD_DIM  = Color(0xFF3E2418)   // copper tint bg
 
-private val T1 = Color(0xFFF2EAD8)
-private val T2 = Color(0xFFB8A882)
-private val T3 = Color(0xFF7A6A4A)
-private val T4 = Color(0xFF4A3C24)
+private val T1 = Color(0xFFF4EEE8)   // headings — warm white
+private val T2 = Color(0xFFC0B4A8)   // body — warm grey
+private val T3 = Color(0xFF978A7E)   // muted (≥4.5:1)
+private val T4 = Color(0xFF6A5F56)   // placeholders
 
-private val TEAL    = Color(0xFF3D8888)
-private val TEAL_LO = Color(0xFF183030)
-private val CRIM    = Color(0xFF8B2424)
-private val CRIM_LO = Color(0xFF280A0A)
+private val TEAL    = Color(0xFF5B9A8B)   // sage-teal — locations
+private val TEAL_LO = Color(0xFF1C2E2A)
+private val CRIM    = Color(0xFFB04A3A)   // soft terracotta-red
+private val CRIM_LO = Color(0xFF2E1512)
 
 // Label palette — 8 distinct warm/cool colours that all work on the dark bg
 val LABEL_COLORS = listOf(
@@ -169,14 +179,22 @@ data class Campaign(
     val id: String = UUID.randomUUID().toString(),
     val name: String, val description: String = "",
     val labels: List<CampaignLabel> = emptyList(),
+    val photoUri: String? = null,
+    val gallery: List<GalleryPhoto> = emptyList(),
     val npcs: List<Npc> = emptyList(),
     val locations: List<Location> = emptyList(),
     val journal: List<JournalEntry> = emptyList()
 )
 
+data class GalleryPhoto(
+    val id: String = UUID.randomUUID().toString(),
+    val path: String,
+    val caption: String = ""
+)
+
 data class Npc(
     val id: String = UUID.randomUUID().toString(), val campaignId: String,
-    val name: String, val role: String = "", val shortCard: String = "",
+    val name: String, val role: String = "", val major: String = "", val shortCard: String = "",
     val fullCard: String = "", val relationships: String = "", val secrets: String = "",
     val sceneHistory: String = "", val tags: String = "",
     val dna: Map<String,String> = emptyMap(),     // structured Airealm fields, one line each
@@ -299,6 +317,7 @@ private fun JSONObject.toCampaign(): Campaign {
     val labArr = optJSONArray("labels") ?: JSONArray()
     return Campaign(
         id = id, name = optString("name",""), description = optString("description",""),
+        photoUri = optString("photoUri","").ifBlank { null },
         labels = buildList { for (i in 0 until labArr.length()) add(labArr.getJSONObject(i).toLabel()) },
         npcs = (optJSONArray("npcs") ?: JSONArray()).let { a ->
             buildList { for (i in 0 until a.length()) add(a.getJSONObject(i).toNpc(id)) }
@@ -308,9 +327,17 @@ private fun JSONObject.toCampaign(): Campaign {
         },
         journal = (optJSONArray("journal") ?: JSONArray()).let { a ->
             buildList { for (i in 0 until a.length()) add(a.getJSONObject(i).toJournal()) }
+        },
+        gallery = (optJSONArray("gallery") ?: JSONArray()).let { a ->
+            buildList { for (i in 0 until a.length()) add(a.getJSONObject(i).toGalleryPhoto()) }
         }
     )
 }
+
+private fun JSONObject.toGalleryPhoto() = GalleryPhoto(
+    id = optString("id").ifBlank { UUID.randomUUID().toString() },
+    path = optString("path",""), caption = optString("caption","")
+)
 
 private fun JSONObject.toJournal() = JournalEntry(
     id = optString("id").ifBlank { UUID.randomUUID().toString() },
@@ -327,7 +354,7 @@ private fun JSONObject.toLabel() = CampaignLabel(
 private fun JSONObject.toNpc(fb: String) = Npc(
     id = optString("id").ifBlank { UUID.randomUUID().toString() },
     campaignId = optString("campaignId", fb),
-    name = optString("name",""), role = optString("role",""),
+    name = optString("name",""), role = optString("role",""), major = optString("major",""),
     shortCard = optString("shortCard",""), fullCard = optString("fullCard",""),
     relationships = optString("relationships",""), secrets = optString("secrets",""),
     sceneHistory = optString("sceneHistory",""), tags = optString("tags",""),
@@ -362,10 +389,16 @@ private fun JSONObject.toLoc(fb: String) = Location(
 
 private fun Campaign.toJson() = JSONObject().apply {
     put("id",id); put("name",name); put("description",description)
+    photoUri?.let { put("photoUri", it) }
     put("labels", JSONArray().also { a -> labels.forEach { a.put(it.toJson()) } })
     put("npcs",   JSONArray().also { a -> npcs.forEach     { a.put(it.toJson()) } })
     put("locations", JSONArray().also { a -> locations.forEach { a.put(it.toJson()) } })
     put("journal", JSONArray().also { a -> journal.forEach { a.put(it.toJson()) } })
+    put("gallery", JSONArray().also { a -> gallery.forEach { a.put(it.toJson()) } })
+}
+
+private fun GalleryPhoto.toJson() = JSONObject().apply {
+    put("id",id); put("path",path); put("caption",caption)
 }
 
 private fun JournalEntry.toJson() = JSONObject().apply {
@@ -378,6 +411,7 @@ private fun CampaignLabel.toJson() = JSONObject().apply {
 
 private fun Npc.toJson() = JSONObject().apply {
     put("id",id); put("campaignId",campaignId); put("name",name); put("role",role)
+    put("major",major)
     put("shortCard",shortCard); put("fullCard",fullCard)
     put("relationships",relationships); put("secrets",secrets)
     put("sceneHistory",sceneHistory); put("tags",tags)
@@ -412,11 +446,25 @@ class MainActivity : ComponentActivity() {
         setContent {
             MaterialTheme(colorScheme = scheme(), typography = Typo) {
                 Box(Modifier.fillMaxSize().background(L1).drawBehind {
-                    // Subtle warm vignette — corners sink into the void
+                    // Warm radial glow at top — like candlelight on a page
                     drawRect(Brush.radialGradient(
-                        listOf(Color.Transparent, L0.copy(alpha = 0.55f)),
-                        center = Offset(size.width/2f, size.height*0.38f),
+                        listOf(Color(0xFF1A140A).copy(alpha=0.6f), Color.Transparent),
+                        center = Offset(size.width*0.5f, size.height*0.10f),
+                        radius = size.maxDimension * 0.55f))
+                    // Vignette — corners sink into the void
+                    drawRect(Brush.radialGradient(
+                        listOf(Color.Transparent, L0.copy(alpha = 0.6f)),
+                        center = Offset(size.width/2f, size.height*0.40f),
                         radius = size.maxDimension * 0.72f))
+                    // Faint gold flecks — parchment grain, deterministic
+                    var seed = 0x9E3779B9.toInt()
+                    repeat(60) {
+                        seed = seed * 1103515245 + 12345
+                        val fx = ((seed ushr 16) and 0x7FFF) / 32767f * size.width
+                        seed = seed * 1103515245 + 12345
+                        val fy = ((seed ushr 16) and 0x7FFF) / 32767f * size.height
+                        drawCircle(GOLD.copy(alpha=0.035f), 0.8f, Offset(fx, fy))
+                    }
                 }) {
                     CompanionApp()
                     NoticeHost(Modifier.align(Alignment.BottomCenter))
@@ -517,6 +565,9 @@ fun CompanionApp() {
                         persist(campaigns.map{if(it.id==c.id)it.copy(npcs=it.npcs+x)else it})
                         screen = Screen.NpcDetail(c.id, x.id)
                     },
+                    onAddGalleryPhoto = { uri -> addPhoto(uri){ path -> persist(campaigns.map{if(it.id==c.id)it.copy(gallery=it.gallery+GalleryPhoto(path=path))else it}) } },
+                    onUpdateCaption  = { gp -> persist(campaigns.map{if(it.id==c.id)it.copy(gallery=it.gallery.map{g->if(g.id==gp.id)gp else g})else it}) },
+                    onDelGalleryPhoto = { gp -> PhotoStore.delete(gp.path); persist(campaigns.map{if(it.id==c.id)it.copy(gallery=it.gallery.filter{g->g.id!=gp.id})else it}) },
                     onAddJournal    = { entry -> persist(campaigns.map{if(it.id==c.id)it.copy(journal=listOf(entry)+it.journal)else it}) },
                     onUpdateJournal = { entry -> persist(campaigns.map{if(it.id==c.id)it.copy(journal=it.journal.map{j->if(j.id==entry.id)entry else j})else it}) },
                     onDelJournal    = { entry -> persist(campaigns.map{if(it.id==c.id)it.copy(journal=it.journal.filter{j->j.id!=entry.id})else it}) }
@@ -592,14 +643,14 @@ fun NoticeHost(modifier: Modifier = Modifier) {
  * deep, desaturated tones (never the old random saturated red/blue clash).
  */
 private val SEAL_HUES = listOf(
-    Color(0xFF6B4A2A), // bronze
-    Color(0xFF4A5A3A), // moss
-    Color(0xFF3A5260), // slate-blue
-    Color(0xFF5A3A42), // wine
-    Color(0xFF50466A), // amethyst
-    Color(0xFF2E5A52), // pine-teal
-    Color(0xFF6A5230), // ochre
-    Color(0xFF455060), // steel
+    Color(0xFF9E5A3A), // copper
+    Color(0xFF5B7A5E), // sage
+    Color(0xFF4A6878), // dusty blue
+    Color(0xFF8A5560), // dusty rose
+    Color(0xFF6A5A82), // muted violet
+    Color(0xFF3E7A6E), // teal
+    Color(0xFFB07848), // warm ochre
+    Color(0xFF566270), // slate
 )
 private fun sealHue(name: String): Color =
     SEAL_HUES[(name.fold(0){a,c->a*31+c.code} and 0x7FFFFFFF) % SEAL_HUES.size]
@@ -669,6 +720,13 @@ fun Ornament(accent: Color = GOLD, modifier: Modifier = Modifier) {
 )
 
 @Composable
+fun StatItemAnim(target: Int, label: String, accent: Color, modifier: Modifier = Modifier) {
+    var play by remember { mutableStateOf(false) }
+    LaunchedEffect(target) { play = true }
+    val animated by animateIntAsState(if (play) target else 0, tween(700, easing=EaseOutCubic), label="countup")
+    StatItem(animated.toString(), label, accent, modifier)
+}
+@Composable
 fun StatItem(value: String, label: String, accent: Color, modifier: Modifier = Modifier) {
     Column(modifier, horizontalAlignment=Alignment.CenterHorizontally) {
         Text(value, style=TextStyle(fontFamily=CinzelFamily, fontWeight=FontWeight.Bold,
@@ -694,6 +752,32 @@ fun StatBox(value: String, label: String, accent: Color = GOLD, modifier: Modifi
 }
 
 // ── Label chip — reusable across list and detail ──────────────────────────────
+
+@Composable
+/** A social tag capsule. Colour hints at relationship type by keyword. */
+@Composable
+fun TagCapsule(text: String) {
+    val t = text.trim()
+    if (t.isBlank()) return
+    val low = t.lowercase()
+    val color = when {
+        listOf("crush","love","amour","attir").any{it in low} -> Color(0xFFD46A8A)   // rose
+        listOf("rival","ennemi","enemy","hate").any{it in low} -> CRIM
+        listOf("sex","had sex","couché","intim").any{it in low} -> Color(0xFFC25C9E)  // magenta
+        listOf("friend","ami","allié","ally").any{it in low} -> TEAL
+        listOf("roommate","roomate","coloc","family","famille").any{it in low} -> GOLD_HI
+        else -> GOLD
+    }
+    Row(Modifier.clip(RoundedCornerShape(999.dp))
+        .background(color.copy(alpha=0.14f))
+        .border(1.dp, color.copy(alpha=0.4f), RoundedCornerShape(999.dp))
+        .padding(horizontal=10.dp, vertical=5.dp),
+        verticalAlignment=Alignment.CenterVertically){
+        Box(Modifier.size(5.dp).clip(CircleShape).background(color))
+        Spacer(Modifier.width(6.dp))
+        Text(t, style=Typo.labelSmall.copy(color=color, letterSpacing=0.5.sp))
+    }
+}
 
 @Composable
 fun LabelChip(label: CampaignLabel, selected: Boolean = true, small: Boolean = false, onClick: (() -> Unit)? = null) {
@@ -838,31 +922,38 @@ fun LoreSection(
 ) {
     var expanded by remember { mutableStateOf(defaultExpanded) }
     val haptic = LocalHapticFeedback.current
-    Column(Modifier.fillMaxWidth()) {
-        GoldLine(alpha=0.18f)
+    // Each section is now an elevated CARD — "social profile" feel, not a flat list
+    Column(Modifier.fillMaxWidth().padding(horizontal=14.dp, vertical=5.dp)
+        .clip(RoundedCornerShape(16.dp))
+        .background(L2)
+        .border(1.dp, if(expanded) accent.copy(alpha=0.22f) else L5, RoundedCornerShape(16.dp))) {
         Row(Modifier.fillMaxWidth()
             .semantics { stateDescription = if (expanded) "Section dépliée" else "Section repliée" }
             .clickable(onClickLabel = if (expanded) "Replier" else "Déplier"){
                 haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove); expanded=!expanded
             }
-            .padding(start=20.dp,end=16.dp,top=14.dp,bottom=if(expanded||summary.isBlank())4.dp else 10.dp),
+            .padding(start=16.dp,end=14.dp,top=15.dp,bottom=if(expanded||summary.isBlank())11.dp else 13.dp),
             verticalAlignment=Alignment.CenterVertically) {
-            Icon(icon, null, Modifier.size(14.dp), tint=accent)
-            Spacer(Modifier.width(9.dp))
-            Text(title.uppercase(), style=Typo.labelLarge.copy(color=accent))
+            // Icon in a tinted round chip
+            Box(Modifier.size(28.dp).clip(CircleShape).background(accent.copy(alpha=0.12f)),
+                contentAlignment=Alignment.Center){
+                Icon(icon, null, Modifier.size(15.dp), tint=accent)
+            }
+            Spacer(Modifier.width(11.dp))
+            Text(title.uppercase(), style=Typo.labelLarge.copy(color=accent, letterSpacing=1.4.sp))
             Spacer(Modifier.weight(1f))
             Icon(if(expanded)Icons.Default.ExpandLess else Icons.Default.ExpandMore,
-                null, Modifier.size(18.dp), tint=accent.copy(alpha=0.45f))
+                null, Modifier.size(20.dp), tint=accent.copy(alpha=0.5f))
         }
         if (!expanded && summary.isNotBlank()) {
             Text(summary, style=Typo.bodySmall.copy(color=T3, fontStyle=FontStyle.Italic),
                 maxLines=2, overflow=TextOverflow.Ellipsis,
-                modifier=Modifier.padding(start=43.dp,end=20.dp,bottom=10.dp))
+                modifier=Modifier.padding(start=16.dp,end=16.dp,bottom=14.dp))
         }
         AnimatedVisibility(expanded,
             enter=fadeIn(tween(180))+expandVertically(tween(200,easing=EaseOutCubic)),
             exit=fadeOut(tween(140))+shrinkVertically(tween(160))) {
-            Column(Modifier.fillMaxWidth()) { content() }
+            Column(Modifier.fillMaxWidth().padding(bottom=8.dp)) { content() }
         }
     }
 }
@@ -900,7 +991,10 @@ fun EntityHero(
     name: String, subtitle: String, firstPhoto: String?,
     accent: Color, onBack: ()->Unit, action: @Composable ()->Unit = {}
 ) {
-    Box(Modifier.fillMaxWidth().height(310.dp)) {
+    var heroShown by remember { mutableStateOf(false) }
+    LaunchedEffect(Unit) { heroShown = true }
+    val heroAlpha by animateFloatAsState(if (heroShown) 1f else 0f, tween(500), label="heroFade")
+    Box(Modifier.fillMaxWidth().height(310.dp).graphicsLayer{ alpha = heroAlpha }) {
         if (firstPhoto != null) {
             val model = ImageRequest.Builder(LocalContext.current).data(File(firstPhoto)).crossfade(true).build()
             AsyncImage(
@@ -966,7 +1060,7 @@ fun SaveBar(label: String, accent: Color = GOLD, enabled: Boolean = true, onClic
                 modifier=Modifier.fillMaxWidth().height(52.dp),
                 shape=RoundedCornerShape(14.dp),
                 colors=ButtonDefaults.buttonColors(containerColor=accent,contentColor=L0,
-                    disabledContainerColor=L4,disabledContentColor=T4),
+                    disabledContainerColor=L4,disabledContentColor=T2.copy(alpha=0.7f)),
                 elevation=ButtonDefaults.buttonElevation(0.dp,0.dp)) {
                 Icon(Icons.Default.Save,null,Modifier.size(17.dp))
                 Spacer(Modifier.width(10.dp))
@@ -1087,6 +1181,7 @@ fun CampaignListScreen(
     var showAdd     by remember { mutableStateOf(false) }
     var showOptions by remember { mutableStateOf(false) }
     var query       by remember { mutableStateOf("") }
+    var scope       by remember { mutableStateOf(SearchScope.ALL) }
     var editTarget  by remember { mutableStateOf<Campaign?>(null) }
     var delTarget   by remember { mutableStateOf<Campaign?>(null) }
 
@@ -1126,18 +1221,30 @@ fun CampaignListScreen(
                     Column {
                         Row(Modifier.fillMaxWidth(),verticalAlignment=Alignment.Top) {
                             Column(Modifier.weight(1f)) {
-                                Text("AIREALM",style=Typo.labelMedium.copy(color=GOLD_MID,letterSpacing=4.sp))
-                                Spacer(Modifier.height(2.dp))
-                                Text("Codex",style=Typo.displayMedium.copy(color=GOLD_HI))
-                        // decorative gold rule
-                        Row(Modifier.padding(top=6.dp).width(150.dp), verticalAlignment=Alignment.CenterVertically) {
-                            Box(Modifier.weight(1f).height(1.dp).background(
-                                Brush.horizontalGradient(listOf(GOLD, GOLD.copy(alpha=0f)))))
-                            Text("◆", style=TextStyle(fontSize=7.sp, color=GOLD.copy(alpha=0.7f)),
-                                modifier=Modifier.padding(horizontal=6.dp))
-                            Box(Modifier.weight(1f).height(1.dp).background(
-                                Brush.horizontalGradient(listOf(GOLD.copy(alpha=0.3f), GOLD.copy(alpha=0f)))))
-                        }
+                                // Eyebrow with flanking dots
+                                Row(verticalAlignment=Alignment.CenterVertically){
+                                    Box(Modifier.size(3.dp).clip(CircleShape).background(GOLD_MID))
+                                    Spacer(Modifier.width(7.dp))
+                                    Text("AIREALM",style=Typo.labelMedium.copy(color=GOLD_MID,letterSpacing=5.sp))
+                                }
+                                Spacer(Modifier.height(4.dp))
+                                // Title with soft glow behind
+                                Box{
+                                    Text("Codex",style=Typo.displayMedium.copy(
+                                        color=GOLD_HI.copy(alpha=0.25f), fontSize=44.sp),
+                                        modifier=Modifier.offset(y=1.dp).blur(16.dp))
+                                    Text("Codex",style=Typo.displayMedium.copy(color=GOLD_HI, fontSize=44.sp))
+                                }
+                                Spacer(Modifier.height(8.dp))
+                                // Double-rule ornament ──◆──
+                                Row(Modifier.width(170.dp), verticalAlignment=Alignment.CenterVertically) {
+                                    Box(Modifier.weight(1f).height(1.5.dp).background(
+                                        Brush.horizontalGradient(listOf(GOLD, GOLD.copy(alpha=0f)))))
+                                    Text("◆", style=TextStyle(fontSize=8.sp, color=GOLD),
+                                        modifier=Modifier.padding(horizontal=7.dp))
+                                    Box(Modifier.weight(1f).height(1.dp).background(
+                                        Brush.horizontalGradient(listOf(GOLD.copy(alpha=0.4f), GOLD.copy(alpha=0f)))))
+                                }
                             }
                             IconButton(onClick={showOptions=true}){
                                 Icon(Icons.Default.MoreVert,"Options",tint=T3)
@@ -1145,11 +1252,11 @@ fun CampaignListScreen(
                         }
                         Spacer(Modifier.height(16.dp))
                         Row(Modifier.fillMaxWidth(), verticalAlignment=Alignment.CenterVertically) {
-                            StatItem(campaigns.size.toString(),"Campagnes",GOLD,Modifier.weight(1f))
+                            StatItemAnim(campaigns.size,"Campagnes",GOLD,Modifier.weight(1f))
                             StatDivider()
-                            StatItem(campaigns.sumOf{it.npcs.size}.toString(),"Personnages",GOLD_HI,Modifier.weight(1f))
+                            StatItemAnim(campaigns.sumOf{it.npcs.size},"Personnages",GOLD_HI,Modifier.weight(1f))
                             StatDivider()
-                            StatItem(campaigns.sumOf{it.locations.size}.toString(),"Lieux",TEAL,Modifier.weight(1f))
+                            StatItemAnim(campaigns.sumOf{it.locations.size},"Lieux",TEAL,Modifier.weight(1f))
                         }
                     }
                 }
@@ -1159,12 +1266,12 @@ fun CampaignListScreen(
                 Box(Modifier.fillMaxWidth().padding(64.dp),contentAlignment=Alignment.Center){
                     Column(horizontalAlignment=Alignment.CenterHorizontally,verticalArrangement=Arrangement.spacedBy(8.dp)){
                         Icon(Icons.Outlined.MenuBook,null,Modifier.size(44.dp),tint=T4)
-                        Text("Aucune campagne",style=Typo.headlineSmall.copy(color=T3))
+                        Text("Ton Codex est vierge",style=Typo.headlineSmall.copy(color=T2))
                         Text("Appuie sur + pour commencer",style=Typo.bodySmall.copy(color=T4))
                     }
                 }
             }
-            // ── Global search field ──────────────────────────────────────────
+            // ── Global search (NPCs + Lieux seulement) ────────────────────────
             item {
                 SearchField(query, { query = it },
                     Modifier.padding(horizontal=14.dp).padding(top=10.dp, bottom=4.dp))
@@ -1177,7 +1284,21 @@ fun CampaignListScreen(
                     }
                 }
             } else {
-                val hits = buildSearchHits(campaigns, query)
+                // Scope filter chips
+                item {
+                    Row(Modifier.fillMaxWidth().padding(horizontal=14.dp,vertical=4.dp),
+                        horizontalArrangement=Arrangement.spacedBy(8.dp)){
+                        ScopeChip("Tout", scope==SearchScope.ALL){scope=SearchScope.ALL}
+                        ScopeChip("Personnages", scope==SearchScope.NPC, GOLD){scope=SearchScope.NPC}
+                        ScopeChip("Lieux", scope==SearchScope.LOCATION, TEAL){scope=SearchScope.LOCATION}
+                    }
+                }
+                val allHits = buildSearchHits(campaigns, query)
+                val hits = when(scope){
+                    SearchScope.ALL -> allHits
+                    SearchScope.NPC -> allHits.filter{it.kind==HitKind.NPC}
+                    SearchScope.LOCATION -> allHits.filter{it.kind==HitKind.LOCATION}
+                }
                 if (hits.isEmpty()) item {
                     Box(Modifier.fillMaxWidth().padding(40.dp),contentAlignment=Alignment.Center){
                         Text("Aucun résultat pour « $query »",
@@ -1185,11 +1306,12 @@ fun CampaignListScreen(
                     }
                 }
                 items(hits, key={it.key}){ hit ->
-                    SearchResultRow(hit) {
-                        when (hit.kind) {
-                            HitKind.NPC      -> onOpenNpcById(hit.campaignId, hit.entityId)
-                            HitKind.LOCATION -> onOpenLocById(hit.campaignId, hit.entityId)
-                            HitKind.JOURNAL  -> onOpen(campaigns.first{it.id==hit.campaignId})
+                    Box(Modifier.animateItem()){
+                        SearchResultRow(hit) {
+                            when (hit.kind) {
+                                HitKind.NPC      -> onOpenNpcById(hit.campaignId, hit.entityId)
+                                HitKind.LOCATION -> onOpenLocById(hit.campaignId, hit.entityId)
+                            }
                         }
                     }
                 }
@@ -1205,8 +1327,13 @@ fun CampaignCard(c: Campaign, onOpen:()->Unit, onEdit:()->Unit, onDelete:()->Uni
         .shadow(10.dp, RoundedCornerShape(16.dp), ambientColor=seal, spotColor=L0)
         .clip(RoundedCornerShape(16.dp)).pressable(onClickLabel="Ouvrir la campagne"){onOpen()}) {
         Box(Modifier.fillMaxWidth().height(78.dp).background(nameGrad(c.name))) {
-            EngravedMonogram(c.name.take(1).uppercase(), seal, 92.sp,
-                Modifier.align(Alignment.CenterEnd).padding(end=14.dp), baseAlpha=0.18f)
+            if(c.photoUri!=null){
+                AsyncImage(model=ImageRequest.Builder(LocalContext.current).data(File(c.photoUri)).crossfade(true).build(),
+                    contentDescription=null, contentScale=ContentScale.Crop, modifier=Modifier.fillMaxSize())
+            } else {
+                EngravedMonogram(c.name.take(1).uppercase(), seal, 92.sp,
+                    Modifier.align(Alignment.CenterEnd).padding(end=14.dp), baseAlpha=0.18f)
+            }
             // top light edge
             Box(Modifier.fillMaxWidth().height(1.dp).align(Alignment.TopCenter).background(
                 Brush.horizontalGradient(listOf(Color.Transparent, seal.copy(alpha=0.5f), Color.Transparent))))
@@ -1251,17 +1378,49 @@ fun CampaignCard(c: Campaign, onOpen:()->Unit, onEdit:()->Unit, onDelete:()->Uni
 
 @Composable
 fun CampaignEditDialog(c: Campaign, onDismiss:()->Unit, onSave:(Campaign)->Unit) {
+    val ctx = LocalContext.current
+    val scope = rememberCoroutineScope()
     var name by remember{mutableStateOf(c.name)}
     var desc by remember{mutableStateOf(c.description)}
+    var photo by remember{mutableStateOf(c.photoUri)}
+    val photoL = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()){ uri ->
+        uri ?: return@rememberLauncherForActivityResult
+        scope.launch {
+            val path = PhotoStore.save(ctx, uri)
+            if (path != null) { photo?.let { PhotoStore.delete(it) }; photo = path }
+            else withContext(Dispatchers.Main){ toast(ctx,"Impossible de lire la photo") }
+        }
+    }
     AlertDialog(onDismissRequest=onDismiss,containerColor=L3,
         title={Text("Modifier",style=Typo.headlineMedium)},
         text={Column(verticalArrangement=Arrangement.spacedBy(10.dp)){
+            // Photo de couverture
+            Box(Modifier.fillMaxWidth().height(96.dp).clip(RoundedCornerShape(12.dp))
+                .background(L4).border(1.dp,GOLD.copy(alpha=0.25f),RoundedCornerShape(12.dp))
+                .clickable{photoL.launch("image/*")}, contentAlignment=Alignment.Center){
+                if(photo!=null){
+                    AsyncImage(model=ImageRequest.Builder(ctx).data(File(photo!!)).crossfade(true).build(),
+                        contentDescription=null, contentScale=ContentScale.Crop, modifier=Modifier.fillMaxSize())
+                    Box(Modifier.fillMaxSize().background(L0.copy(alpha=0.25f)))
+                    Box(Modifier.align(Alignment.TopEnd).padding(6.dp).size(28.dp).clip(CircleShape)
+                        .background(L0.copy(alpha=0.6f)).clickable{photo?.let{PhotoStore.delete(it)};photo=null},
+                        contentAlignment=Alignment.Center){
+                        Icon(Icons.Default.Close,"Retirer la photo",Modifier.size(15.dp),tint=T1)
+                    }
+                } else {
+                    Column(horizontalAlignment=Alignment.CenterHorizontally){
+                        Icon(Icons.Default.AddAPhoto,null,Modifier.size(22.dp),tint=GOLD)
+                        Spacer(Modifier.height(4.dp))
+                        Text("Photo de couverture",style=Typo.labelSmall.copy(color=GOLD.copy(alpha=0.8f)))
+                    }
+                }
+            }
             OutlinedTextField(value=name,onValueChange={name=it},label={Text("Nom")},singleLine=true,modifier=Modifier.fillMaxWidth(),
                 colors=OutlinedTextFieldDefaults.colors(focusedBorderColor=GOLD,cursorColor=GOLD,focusedContainerColor=L4,unfocusedContainerColor=L4))
             OutlinedTextField(value=desc,onValueChange={desc=it},label={Text("Description")},minLines=2,modifier=Modifier.fillMaxWidth(),
                 colors=OutlinedTextFieldDefaults.colors(focusedBorderColor=GOLD,cursorColor=GOLD,focusedContainerColor=L4,unfocusedContainerColor=L4))
         }},
-        confirmButton={Button(onClick={onSave(c.copy(name=name.ifBlank{c.name},description=desc))},
+        confirmButton={Button(onClick={onSave(c.copy(name=name.ifBlank{c.name},description=desc,photoUri=photo))},
             colors=ButtonDefaults.buttonColors(containerColor=GOLD,contentColor=L0)){Text("Sauver")}},
         dismissButton={TextButton(onClick=onDismiss){Text("Annuler")}})
 }
@@ -1279,7 +1438,8 @@ fun CampaignDetailScreen(
     onAddLoc:(String)->Unit, onDelLoc:(Location)->Unit,
     onUpdateLabels:(List<CampaignLabel>)->Unit,
     onImportNpc:(Npc)->Unit,
-    onAddJournal:(JournalEntry)->Unit, onUpdateJournal:(JournalEntry)->Unit, onDelJournal:(JournalEntry)->Unit
+    onAddJournal:(JournalEntry)->Unit, onUpdateJournal:(JournalEntry)->Unit, onDelJournal:(JournalEntry)->Unit,
+    onAddGalleryPhoto:(Uri)->Unit, onUpdateCaption:(GalleryPhoto)->Unit, onDelGalleryPhoto:(GalleryPhoto)->Unit
 ) {
     val ctx = LocalContext.current
     var tab          by remember{mutableIntStateOf(0)}
@@ -1287,6 +1447,7 @@ fun CampaignDetailScreen(
     var showAddLoc     by remember{mutableStateOf(false)}
     var showAddJournal by remember{mutableStateOf(false)}
     var showImport     by remember{mutableStateOf(false)}
+    var showNpcChoice  by remember{mutableStateOf(false)}
     var editJournal    by remember{mutableStateOf<JournalEntry?>(null)}
     var showLabels   by remember{mutableStateOf(false)}
     var activeFilter by remember{mutableStateOf<String?>(null)}  // null = all
@@ -1295,17 +1456,22 @@ fun CampaignDetailScreen(
     if(showAddLoc) AddSheet("Nouveau lieu","Nom…",TEAL,{showAddLoc=false}){onAddLoc(it)}
     if(showAddJournal) JournalSheet(null,{showAddJournal=false}){onAddJournal(it)}
     if(showImport) ImportSheet({showImport=false}){onImportNpc(it)}
+    if(showNpcChoice) NpcChoiceSheet(
+        onDismiss={showNpcChoice=false},
+        onImport={showNpcChoice=false; showImport=true},
+        onBlank={showNpcChoice=false; showAddNpc=true})
     editJournal?.let{ entry -> JournalSheet(entry,{editJournal=null}){onUpdateJournal(it)} }
     if(showLabels) LabelManagerDialog(c.labels,{showLabels=false},onUpdateLabels)
 
     Scaffold(containerColor=Color.Transparent,
         floatingActionButton={
+            val galleryPicker = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()){ it?.let(onAddGalleryPhoto) }
             ExtendedFloatingActionButton(
-                onClick={when(tab){0->showAddNpc=true;1->showAddLoc=true;else->showAddJournal=true}},
-                containerColor=when(tab){0->GOLD;1->TEAL;else->GOLD_MID},contentColor=L0,
+                onClick={when(tab){0->showNpcChoice=true;1->showAddLoc=true;2->showAddJournal=true;else->galleryPicker.launch("image/*")}},
+                containerColor=when(tab){0->GOLD;1->TEAL;2->GOLD_MID;else->TEAL},contentColor=L0,
                 modifier=Modifier.navigationBarsPadding(),
-                icon={Icon(when(tab){0->Icons.Default.PersonAdd;1->Icons.Default.AddLocation;else->Icons.Default.HistoryEdu},null,Modifier.size(20.dp))},
-                text={Text(when(tab){0->"Personnage";1->"Lieu";else->"Entrée"},style=Typo.labelLarge.copy(fontFamily=CinzelFamily,fontSize=13.sp))},
+                icon={Icon(when(tab){0->Icons.Default.PersonAdd;1->Icons.Default.AddLocation;2->Icons.Default.HistoryEdu;else->Icons.Default.AddPhotoAlternate},null,Modifier.size(20.dp))},
+                text={Text(when(tab){0->"Personnage";1->"Lieu";2->"Entrée";else->"Photo"},style=Typo.labelLarge.copy(fontFamily=CinzelFamily,fontSize=13.sp))},
                 shape=RoundedCornerShape(16.dp))
         }) { pads ->
         Column(Modifier.fillMaxSize()) {
@@ -1361,7 +1527,7 @@ fun CampaignDetailScreen(
                         indicator={tabs->Box(Modifier.tabIndicatorOffset(tabs[tab]).height(2.dp)
                             .background(Brush.horizontalGradient(listOf(GOLD.copy(alpha=0f),GOLD_HI,GOLD.copy(alpha=0f)))))},
                         divider={GoldLine(0.18f)}) {
-                        listOf("Personnages" to c.npcs.size,"Lieux" to c.locations.size,"Journal" to c.journal.size)
+                        listOf("Personnages" to c.npcs.size,"Lieux" to c.locations.size,"Journal" to c.journal.size,"Galerie" to c.gallery.size)
                             .forEachIndexed{i,(lbl,cnt)->
                                 Tab(selected=tab==i,onClick={tab=i}){
                                     Text("$lbl · $cnt",
@@ -1388,7 +1554,7 @@ fun CampaignDetailScreen(
                         getPhoto={it.photoUris.firstOrNull()},
                         onOpen={onOpenNpc(it)},onDel={onDelNpc(it)},
                         bottomPad=pads.calculateBottomPadding())
-                    1 -> EntityList(filteredLocs.sortedBy{it.name.lowercase()},
+                    1 -> EntityList(filteredLocs.sortedBy{it.name.lowercase()}, typeIcon=Icons.Default.Place,
                         emptyTitle=if(activeFilter!=null)"Aucun résultat" else "Aucun lieu",
                         emptyHint=if(activeFilter!=null)"Aucun lieu avec ce label" else "Appuie sur + pour ajouter",
                         emptyIcon=Icons.Outlined.Place, accent=TEAL,
@@ -1402,6 +1568,9 @@ fun CampaignDetailScreen(
                     2 -> JournalTab(c.journal,
                         onEdit={editJournal=it}, onDel=onDelJournal,
                         bottomPad=pads.calculateBottomPadding())
+                    3 -> GalleryTab(c.gallery,
+                        onUpdateCaption=onUpdateCaption, onDel=onDelGalleryPhoto,
+                        bottomPad=pads.calculateBottomPadding())
                 }
             }
         }
@@ -1414,7 +1583,8 @@ fun <T> EntityList(
     accent: Color, getKey:(T)->String, getName:(T)->String, getSub:(T)->String,
     getPreview:(T)->String, getTags:(T)->String,
     getLabels:(List<String>)->List<CampaignLabel>, getLabelIds:(T)->List<String>,
-    getPhoto:(T)->String?, onOpen:(T)->Unit, onDel:(T)->Unit, bottomPad: Dp
+    getPhoto:(T)->String?, onOpen:(T)->Unit, onDel:(T)->Unit, bottomPad: Dp,
+    typeIcon: ImageVector = Icons.Default.Person
 ) {
     var delTarget by remember{mutableStateOf<T?>(null)}
     delTarget?.let{t-> ConfirmDelete("Supprimer ?","« ${getName(t)} » sera supprimé.",
@@ -1432,13 +1602,15 @@ fun <T> EntityList(
         }
     } else {
         LazyColumn(Modifier.fillMaxSize(),
-            contentPadding=PaddingValues(top=8.dp,bottom=bottomPad+88.dp),
+            contentPadding=PaddingValues(top=8.dp,bottom=bottomPad+104.dp),
             verticalArrangement=Arrangement.spacedBy(8.dp)){
-            items(items,key={getKey(it)}){ item ->
+            itemsIndexed(items, key={_,it->getKey(it)}){ index, item ->
                 val labels = getLabels(getLabelIds(item))
-                Box(Modifier.animateItem()) {
-                    EntityCard(getName(item),getSub(item),getPreview(item),getTags(item),
-                        labels,getPhoto(item),accent,{onOpen(item)},{delTarget=item})
+                CascadeIn(index) {
+                    Box(Modifier.animateItem()) {
+                        EntityCard(getName(item),getSub(item),getPreview(item),getTags(item),
+                            labels,getPhoto(item),accent,typeIcon,{onOpen(item)},{delTarget=item})
+                    }
                 }
             }
         }
@@ -1449,56 +1621,78 @@ fun <T> EntityList(
 fun EntityCard(
     name: String, sub: String, preview: String, tags: String,
     labels: List<CampaignLabel>, photoUri: String?,
-    accent: Color, onClick:()->Unit, onDel:()->Unit
+    accent: Color, typeIcon: ImageVector = Icons.Default.Person,
+    onClick:()->Unit, onDel:()->Unit
 ) {
-    Box(Modifier.fillMaxWidth().padding(horizontal=14.dp, vertical=2.dp)
-        .shadow(8.dp, RoundedCornerShape(14.dp), ambientColor=sealHue(name), spotColor=L0)
-        .clip(RoundedCornerShape(14.dp)).pressable(onClickLabel="Ouvrir"){onClick()}) {
+    val seal = sealHue(name)
+    Box(Modifier.fillMaxWidth().padding(horizontal=16.dp, vertical=7.dp)
+        .shadow(12.dp, RoundedCornerShape(20.dp), ambientColor=seal.copy(alpha=0.5f), spotColor=L0)
+        .clip(RoundedCornerShape(20.dp))
+        .background(L2)
+        .border(1.dp, L5, RoundedCornerShape(20.dp))
+        .pressable(onClickLabel="Ouvrir"){onClick()}) {
         Column {
-            // Banner
-            Box(Modifier.fillMaxWidth().height(118.dp)) {
+            // ── Framed banner — photo fills, name overlaid at bottom ──────────
+            Box(Modifier.fillMaxWidth().height(168.dp)
+                .clip(RoundedCornerShape(topStart=20.dp, topEnd=20.dp))) {
                 if(photoUri!=null){
-                    val model = ImageRequest.Builder(LocalContext.current).data(File(photoUri)).crossfade(true).build()
-                    AsyncImage(model=model, contentDescription=null, contentScale=ContentScale.Crop,
-                        modifier=Modifier.fillMaxSize().blur(12.dp).alpha(0.28f))
-                    Box(Modifier.fillMaxSize().background(Brush.horizontalGradient(listOf(L0.copy(alpha=0.60f), Color.Transparent, L0.copy(alpha=0.72f)))))
-                    AsyncImage(model=model, contentDescription=null, contentScale=ContentScale.Fit,
-                        modifier=Modifier.fillMaxSize().padding(vertical=6.dp))
+                    AsyncImage(
+                        model=ImageRequest.Builder(LocalContext.current).data(File(photoUri)).crossfade(true).build(),
+                        contentDescription=null, contentScale=ContentScale.Crop,
+                        modifier=Modifier.fillMaxSize())
                 } else {
-                    val seal = sealHue(name)
                     Box(Modifier.fillMaxSize().background(nameGrad(name))){
-                        Box(Modifier.fillMaxWidth().height(1.dp).align(Alignment.TopCenter).background(
-                            Brush.horizontalGradient(listOf(Color.Transparent, seal.copy(alpha=0.5f), Color.Transparent))))
-                        EngravedMonogram(name.take(1).uppercase(), seal, 96.sp,
-                            Modifier.align(Alignment.CenterEnd).padding(end=16.dp), baseAlpha=0.2f)
+                        EngravedMonogram(name.take(1).uppercase(), seal, 120.sp,
+                            Modifier.align(Alignment.Center), baseAlpha=0.22f)
                     }
                 }
+                // Bottom scrim so the name is always readable over any photo
                 Box(Modifier.fillMaxSize().background(
-                    Brush.verticalGradient(listOf(Color.Transparent,L2.copy(alpha=0.85f)))))
+                    Brush.verticalGradient(
+                        0.40f to Color.Transparent,
+                        1f to L0.copy(alpha=0.90f))))
+                // Type-coloured pill top-left — visual identity per type
+                Row(Modifier.align(Alignment.TopStart).padding(12.dp)
+                    .clip(RoundedCornerShape(999.dp)).background(L0.copy(alpha=0.5f))
+                    .border(1.dp, accent.copy(alpha=0.4f), RoundedCornerShape(999.dp))
+                    .padding(horizontal=9.dp, vertical=5.dp),
+                    verticalAlignment=Alignment.CenterVertically, horizontalArrangement=Arrangement.spacedBy(5.dp)){
+                    Icon(typeIcon, null, Modifier.size(12.dp), tint=accent)
+                    if(sub.isNotBlank())
+                        Text(sub.uppercase(), style=Typo.labelSmall.copy(color=T1, letterSpacing=1.2.sp),
+                            maxLines=1, overflow=TextOverflow.Ellipsis)
+                }
+                // Name, bottom-left
+                Text(name, style=Typo.headlineSmall.copy(color=Color.White,
+                    shadow=Shadow(L0, Offset(0f,2f), 12f)),
+                    maxLines=1, overflow=TextOverflow.Ellipsis,
+                    modifier=Modifier.align(Alignment.BottomStart).padding(start=18.dp, end=64.dp, bottom=14.dp))
+                // Delete — top right
+                Box(Modifier.align(Alignment.TopEnd).padding(8.dp).size(40.dp)
+                    .clip(CircleShape).background(L0.copy(alpha=0.5f))
+                    .clickable(onClickLabel="Supprimer"){onDel()}, contentAlignment=Alignment.Center){
+                    Icon(Icons.Default.Delete,"Supprimer",Modifier.size(17.dp),tint=T1)
+                }
             }
-            // Body
-            Row(Modifier.fillMaxWidth().background(L2)
-                .border(1.dp,L5,RoundedCornerShape(bottomStart=14.dp,bottomEnd=14.dp))
-                .clip(RoundedCornerShape(bottomStart=14.dp,bottomEnd=14.dp)),
-                verticalAlignment=Alignment.Top){
-                Box(Modifier.width(3.dp).height(60.dp).background(
-                    Brush.verticalGradient(listOf(accent.copy(alpha=0f),accent.copy(alpha=0.7f),accent.copy(alpha=0f)))))
-                Column(Modifier.weight(1f).padding(start=12.dp,top=10.dp,bottom=12.dp,end=4.dp)){
-                    Text(name,style=Typo.titleLarge.copy(color=T1),maxLines=1,overflow=TextOverflow.Ellipsis)
-                    if(sub.isNotBlank()) Text(sub.uppercase(),style=Typo.labelSmall.copy(color=accent,letterSpacing=1.5.sp),modifier=Modifier.padding(top=2.dp))
-                    if(preview.isNotBlank()) Text(preview,style=Typo.bodySmall.copy(color=T2),maxLines=2,overflow=TextOverflow.Ellipsis,modifier=Modifier.padding(top=5.dp))
-                    // Labels row
+            // ── Body — preview + labels, generous padding ─────────────────────
+            if (preview.isNotBlank() || labels.isNotEmpty() || tags.isNotBlank()) {
+                Column(Modifier.fillMaxWidth().padding(start=18.dp, end=18.dp, top=12.dp, bottom=14.dp)) {
+                    if(preview.isNotBlank())
+                        Text(preview, style=Typo.bodyMedium.copy(color=T2),
+                            maxLines=2, overflow=TextOverflow.Ellipsis)
                     if(labels.isNotEmpty()){
-                        LazyRow(Modifier.padding(top=7.dp),horizontalArrangement=Arrangement.spacedBy(5.dp)){
+                        LazyRow(Modifier.padding(top=if(preview.isNotBlank()) 10.dp else 0.dp),
+                            horizontalArrangement=Arrangement.spacedBy(6.dp)){
                             items(labels){lbl-> LabelChip(lbl,small=true)}
                         }
                     } else if(tags.isNotBlank()){
-                        // Fallback to text tags when no structured labels
-                        Text(tags,style=Typo.labelSmall.copy(color=T3),modifier=Modifier.padding(top=6.dp))
+                        LazyRow(Modifier.padding(top=if(preview.isNotBlank()) 10.dp else 0.dp),
+                            horizontalArrangement=Arrangement.spacedBy(6.dp)){
+                            items(tags.split(',').map{it.trim()}.filter{it.isNotBlank()}.take(5)){ tg ->
+                                TagCapsule(tg)
+                            }
+                        }
                     }
-                }
-                IconButton(onClick=onDel,Modifier.padding(top=2.dp).size(44.dp)){
-                    Icon(Icons.Default.Delete,"Supprimer",Modifier.size(18.dp),tint=CRIM.copy(alpha=0.7f))
                 }
             }
         }
@@ -1529,6 +1723,7 @@ fun NpcScreen(
     fun export() = buildString {
         appendLine("NPC: ${e.name}")
         if(e.role.isNotBlank())          appendLine("Rôle: ${e.role}")
+        if(e.major.isNotBlank())         appendLine("Filière: ${e.major}")
         if(e.shortCard.isNotBlank())     appendLine("Carte: ${e.shortCard}")
         if(e.fullCard.isNotBlank())      appendLine(e.fullCard)
         (DNA_KEYS + "Lives" + INERTIA_KEYS + "Facets").forEach { k ->
@@ -1542,7 +1737,8 @@ fun NpcScreen(
     }.trim()
 
     Column(Modifier.fillMaxSize().imePadding()) {
-        EntityHero(name=e.name.ifBlank{"NPC"},subtitle=e.role,
+        EntityHero(name=e.name.ifBlank{"NPC"},
+            subtitle=listOf(e.role,e.major).filter{it.isNotBlank()}.joinToString(" · "),
             firstPhoto=npc.photoUris.firstOrNull(),accent=GOLD,onBack=onBack,
             action={IconButton(onClick={
                 val clip=ClipData.newPlainText("NPC",export())
@@ -1555,13 +1751,15 @@ fun NpcScreen(
             LoreSection("Identité",Icons.Default.Person,
                 summary=e.name.ifBlank{"—"}+if(e.role.isNotBlank())" · ${e.role}"else""){
                 LoreField("Nom",e.name,"Nom du personnage"){e=e.copy(name=it)}
-                LoreField("Rôle · Faction · Statut",e.role,"ex. Garde royal, faction Ombre"){e=e.copy(role=it)}
+                LoreField("Âge · Année · Statut",e.role,"ex. 18yo · Freshman"){e=e.copy(role=it)}
+                LoreField("Filière · Major",e.major,"ex. English Literature"){e=e.copy(major=it)}
                 LoreField("Tags libres",e.tags,"ex. allié, majeur, antagoniste"){e=e.copy(tags=it)}
                 // Label picker
                 if(campaignLabels.isNotEmpty()){
-                    Spacer(Modifier.height(4.dp))
+                    Spacer(Modifier.height(8.dp))
                     LabelPicker(campaignLabels,e.labelIds){id->
                         e=e.copy(labelIds=if(id in e.labelIds)e.labelIds-id else e.labelIds+id)}
+                    Spacer(Modifier.height(4.dp))
                 }
             }
             LoreSection("Cartes Airealm",Icons.Default.Description,
@@ -1754,7 +1952,8 @@ private fun Modifier.tabIndicatorOffset(pos: TabPosition) =
 // SEARCH
 // ─────────────────────────────────────────────────────────────────────────────
 
-enum class HitKind { NPC, LOCATION, JOURNAL }
+enum class HitKind { NPC, LOCATION }
+enum class SearchScope { ALL, NPC, LOCATION }
 
 data class SearchHit(
     val kind: HitKind, val campaignId: String, val campaignName: String,
@@ -1773,17 +1972,14 @@ fun buildSearchHits(campaigns: List<Campaign>, rawQuery: String): List<SearchHit
         } ?: ""
     val hits = mutableListOf<SearchHit>()
     for (c in campaigns) {
-        for (n in c.npcs) if (listOf(n.name,n.role,n.tags,n.shortCard,n.fullCard,n.relationships,n.sceneHistory).any{it.hit()})
-            hits += SearchHit(HitKind.NPC, c.id, c.name, n.id, n.name, n.role,
-                snippetOf(n.shortCard,n.fullCard,n.relationships,n.sceneHistory,n.tags))
-        for (l in c.locations) if (listOf(l.name,l.type,l.tags,l.description,l.atmosphere,l.notableFeatures).any{it.hit()})
-            hits += SearchHit(HitKind.LOCATION, c.id, c.name, l.id, l.name, l.type,
-                snippetOf(l.description,l.atmosphere,l.notableFeatures,l.tags))
-        for (j in c.journal) if (j.title.hit() || j.text.hit())
-            hits += SearchHit(HitKind.JOURNAL, c.id, c.name, j.id, j.title.ifBlank{"Entrée de journal"}, c.name,
-                snippetOf(j.text, j.title))
+        // Match on NAME only — predictable, no content noise
+        for (n in c.npcs) if (n.name.hit())
+            hits += SearchHit(HitKind.NPC, c.id, c.name, n.id, n.name, n.role, "")
+        for (l in c.locations) if (l.name.hit())
+            hits += SearchHit(HitKind.LOCATION, c.id, c.name, l.id, l.name, l.type, "")
     }
-    return hits.take(40)
+    // Names starting with the query rank first
+    return hits.sortedBy { if (it.name.startsWith(q, ignoreCase=true)) 0 else 1 }.take(40)
 }
 
 @Composable
@@ -1813,7 +2009,6 @@ fun SearchResultRow(hit: SearchHit, onClick: ()->Unit) {
     val (icon, accent) = when (hit.kind) {
         HitKind.NPC      -> Icons.Default.Person to GOLD
         HitKind.LOCATION -> Icons.Default.Place to TEAL
-        HitKind.JOURNAL  -> Icons.Default.HistoryEdu to GOLD_MID
     }
     Row(Modifier.fillMaxWidth().padding(horizontal=14.dp, vertical=3.dp)
         .clip(RoundedCornerShape(12.dp)).background(L2)
@@ -1881,7 +2076,7 @@ fun JournalTab(entries: List<JournalEntry>, onEdit:(JournalEntry)->Unit, onDel:(
         return
     }
     LazyColumn(Modifier.fillMaxSize(),
-        contentPadding=PaddingValues(top=10.dp, bottom=bottomPad+88.dp),
+        contentPadding=PaddingValues(top=10.dp, bottom=bottomPad+104.dp),
         verticalArrangement=Arrangement.spacedBy(8.dp)) {
         items(entries.sortedByDescending{it.dateMillis}, key={it.id}) { j ->
             JournalCard(j, onEdit={onEdit(j)}, onDelete={delTarget=j},
@@ -1928,7 +2123,7 @@ fun JournalSheet(existing: JournalEntry?, onDismiss:()->Unit, onSave:(JournalEnt
             }, enabled=title.isNotBlank()||text.isNotBlank(),
                 modifier=Modifier.fillMaxWidth().height(50.dp), shape=RoundedCornerShape(12.dp),
                 colors=ButtonDefaults.buttonColors(containerColor=GOLD,contentColor=L0,
-                    disabledContainerColor=L4,disabledContentColor=T4)) {
+                    disabledContainerColor=L4,disabledContentColor=T2.copy(alpha=0.7f))) {
                 Text(if(existing==null)"Ajouter au journal" else "Enregistrer",
                     style=Typo.labelLarge.copy(fontFamily=CinzelFamily,fontSize=14.sp))
             }
@@ -1992,36 +2187,38 @@ fun parseAirealmCard(name: String, raw: String): Npc {
         it.substringAfter(' ', it).startsWith("$key:", ignoreCase = true)  // tolerate emoji prefix
     }?.substringAfter(":")?.trim() ?: ""
 
-    // ── Header ────────────────────────────────────────────────────────────
+    // ── Header : | 18yo | Freshman | Major: X | Traits: … | Lives in … ─────
     val header = lines.firstOrNull { it.startsWith("|") } ?: ""
     val parts  = header.split("|").map { it.trim() }.filter { it.isNotBlank() }
-    fun part(prefix: String) = parts.firstOrNull { it.startsWith(prefix, ignoreCase = true) }
-    val major  = part("Major")?.substringAfter(":")?.trim() ?: ""
-    val traits = part("Traits")?.substringAfter(":")?.trim() ?: ""
-    val lives  = part("Lives") ?: ""
-    val ageYear = parts.filter { p ->
+    // A segment "Major: English Literature" → on isole la valeur après ':'
+    fun seg(prefix: String) = parts.firstOrNull { it.startsWith(prefix, ignoreCase = true) }
+        ?.substringAfter(":")?.trim() ?: ""
+    val major  = seg("Major")
+    val traits = seg("Traits")
+    val lives  = parts.firstOrNull { it.startsWith("Lives", ignoreCase = true) } ?: ""
+    // Le rôle = âge + année (Freshman…) UNIQUEMENT, sans le major (qui a son champ)
+    val role = parts.filter { p ->
         listOf("Major","Traits","Lives").none { p.startsWith(it, ignoreCase = true) }
     }.joinToString(" · ")
-
-    val role = listOf(ageYear, major).filter { it.isNotBlank() }.joinToString(" · ")
 
     // ── DNA + INERTIA → structured map, one entry per field ────────────────
     val dnaMap = linkedMapOf<String,String>()
     if (lives.isNotBlank()) dnaMap["Lives"] = lives
     (DNA_KEYS + INERTIA_KEYS).forEach { k -> grab(k).ifBlank { null }?.let { dnaMap[k] = it } }
-    val facetLine = lines.firstOrNull { it.contains("Attraction") || it.contains("Comfort") }
+    // Facets : détection élargie — toute ligne contenant un de ces marqueurs de stat
+    val facetMarkers = listOf("Attraction","Intimacy","Affinity","Trust","Comfort","Respect","Suspicion","Jealousy")
+    val facetLine = lines.firstOrNull { l -> facetMarkers.count { l.contains(it, ignoreCase = true) } >= 2 }
     if (!facetLine.isNullOrBlank()) dnaMap["Facets"] = facetLine
 
-    // ── INERTIA target → relationships (free text) ─────────────────────────
-    val vsTarget = Regex("vs\\s+([^)]+)\\)").find(raw)?.groupValues?.get(1)?.trim() ?: ""
-    val relationships = if (vsTarget.isNotBlank()) "Vis-à-vis de $vsTarget" else ""
+    // Relations laissé VIDE à l'import (l'utilisateur le remplit lui-même)
+    val relationships = ""
 
     val tags = listOf(traits, grab("Clique")).filter { it.isNotBlank() }.joinToString(", ")
-    val parsedSignals = listOf(header, dnaMap.isNotEmpty().toString().takeIf{dnaMap.isNotEmpty()} ?: "").count { it.isNotBlank() }
     return Npc(
         campaignId = "",
         name = name.trim(),
         role = role,
+        major = major,
         shortCard = header,
         fullCard = if (dnaMap.isEmpty() && header.isBlank()) raw.trim() else "",
         relationships = relationships,
@@ -2149,4 +2346,258 @@ fun dnaSummary(dna: Map<String,String>, keys: List<String>): String {
     val present = keys.count { !dna[it].isNullOrBlank() }
     return if (present == 0) "Non renseigné"
         else "$present champ${if (present>1) "s" else ""} renseigné${if (present>1) "s" else ""}"
+}
+
+
+// ─────────────────────────────────────────────────────────────────────────────
+// SEARCH SCOPE CHIP
+// ─────────────────────────────────────────────────────────────────────────────
+
+@Composable
+fun ScopeChip(label: String, selected: Boolean, accent: Color = GOLD, onClick: ()->Unit) {
+    val haptic = LocalHapticFeedback.current
+    Box(Modifier.clip(RoundedCornerShape(999.dp))
+        .background(if(selected) accent.copy(alpha=0.18f) else L3)
+        .border(1.dp, if(selected) accent.copy(alpha=0.55f) else L5, RoundedCornerShape(999.dp))
+        .clickable{ haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove); onClick() }
+        .padding(horizontal=14.dp, vertical=7.dp)){
+        Text(label, style=Typo.labelMedium.copy(color=if(selected) accent else T3))
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// GALLERY — grid + fullscreen zoom/swipe viewer + captions
+// ─────────────────────────────────────────────────────────────────────────────
+
+@Composable
+fun GalleryTab(
+    photos: List<GalleryPhoto>,
+    onUpdateCaption: (GalleryPhoto)->Unit,
+    onDel: (GalleryPhoto)->Unit,
+    bottomPad: Dp
+) {
+    var viewerIndex by remember { mutableStateOf<Int?>(null) }
+
+    if (photos.isEmpty()) {
+        Box(Modifier.fillMaxSize(), contentAlignment=Alignment.Center){
+            Column(horizontalAlignment=Alignment.CenterHorizontally, verticalArrangement=Arrangement.spacedBy(8.dp)){
+                Ornament(TEAL)
+                Icon(Icons.Outlined.PhotoLibrary, null, Modifier.size(44.dp), tint=T4)
+                Text("Galerie vide", style=Typo.headlineSmall.copy(color=T3))
+                Text("Ajoute des photos d'ambiance ou de scènes", style=Typo.bodySmall.copy(color=T4))
+                Ornament(TEAL)
+            }
+        }
+    } else {
+        LazyVerticalGrid(
+            columns = GridCells.Fixed(2),
+            modifier = Modifier.fillMaxSize(),
+            contentPadding = PaddingValues(start=12.dp, end=12.dp, top=12.dp, bottom=bottomPad+104.dp),
+            horizontalArrangement = Arrangement.spacedBy(10.dp),
+            verticalArrangement = Arrangement.spacedBy(10.dp)
+        ) {
+            gridItems(photos, key={it.id}) { photo ->
+                val idx = photos.indexOf(photo)
+                Column(Modifier.animateItem()) {
+                    Box(Modifier.fillMaxWidth().aspectRatio(1f)
+                        .clip(RoundedCornerShape(12.dp)).background(L2)
+                        .border(1.dp, L5, RoundedCornerShape(12.dp))
+                        .pressable(onClickLabel="Agrandir"){ viewerIndex = idx }){
+                        AsyncImage(
+                            model=ImageRequest.Builder(LocalContext.current).data(File(photo.path)).crossfade(true).build(),
+                            contentDescription=photo.caption.ifBlank{"Photo"},
+                            contentScale=ContentScale.Crop, modifier=Modifier.fillMaxSize())
+                        if (photo.caption.isNotBlank()) {
+                            Box(Modifier.align(Alignment.BottomStart).fillMaxWidth()
+                                .background(Brush.verticalGradient(listOf(Color.Transparent, L0.copy(alpha=0.85f))))
+                                .padding(horizontal=8.dp, vertical=6.dp)){
+                                Text(photo.caption, style=Typo.labelSmall.copy(color=T1),
+                                    maxLines=2, overflow=TextOverflow.Ellipsis,
+                                    modifier=Modifier.align(Alignment.BottomStart))
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // Fullscreen viewer
+    viewerIndex?.let { startIdx ->
+        GalleryViewer(photos, startIdx,
+            onClose={ viewerIndex=null },
+            onUpdateCaption=onUpdateCaption, onDel={ gp ->
+                onDel(gp)
+                viewerIndex = null
+            })
+    }
+}
+
+@Composable
+fun GalleryViewer(
+    photos: List<GalleryPhoto>, startIndex: Int,
+    onClose: ()->Unit, onUpdateCaption: (GalleryPhoto)->Unit, onDel: (GalleryPhoto)->Unit
+) {
+    val pagerState = rememberPagerState(initialPage=startIndex.coerceIn(0, (photos.size-1).coerceAtLeast(0))){ photos.size }
+    var editingCaption by remember { mutableStateOf<GalleryPhoto?>(null) }
+    var delTarget by remember { mutableStateOf<GalleryPhoto?>(null) }
+
+    editingCaption?.let { gp ->
+        var text by remember { mutableStateOf(gp.caption) }
+        AlertDialog(onDismissRequest={editingCaption=null}, containerColor=L3,
+            title={Text("Légende", style=Typo.headlineSmall)},
+            text={ OutlinedTextField(value=text, onValueChange={text=it},
+                placeholder={Text("Qui / quoi sur cette photo…", color=T4, style=Typo.bodyMedium.copy(fontStyle=FontStyle.Italic))},
+                modifier=Modifier.fillMaxWidth(), minLines=2, shape=RoundedCornerShape(10.dp),
+                colors=OutlinedTextFieldDefaults.colors(focusedBorderColor=GOLD, unfocusedBorderColor=L6,
+                    focusedContainerColor=L4, unfocusedContainerColor=L4, cursorColor=GOLD),
+                textStyle=Typo.bodyMedium.copy(color=T1)) },
+            confirmButton={Button(onClick={onUpdateCaption(gp.copy(caption=text.trim())); editingCaption=null},
+                colors=ButtonDefaults.buttonColors(containerColor=GOLD, contentColor=L0)){Text("Enregistrer")}},
+            dismissButton={TextButton(onClick={editingCaption=null}){Text("Annuler")}})
+    }
+    delTarget?.let { gp ->
+        ConfirmDelete("Supprimer la photo ?","Cette photo sera retirée de la galerie.",
+            {onDel(gp); delTarget=null}, {delTarget=null})
+    }
+
+    androidx.compose.ui.window.Dialog(
+        onDismissRequest=onClose,
+        properties=androidx.compose.ui.window.DialogProperties(usePlatformDefaultWidth=false)
+    ) {
+        Box(Modifier.fillMaxSize().background(Color(0xF0000000))){
+            HorizontalPager(state=pagerState, modifier=Modifier.fillMaxSize()){ page ->
+                val photo = photos[page]
+                var scale by remember { mutableStateOf(1f) }
+                var offX by remember { mutableStateOf(0f) }
+                var offY by remember { mutableStateOf(0f) }
+                Box(Modifier.fillMaxSize()
+                    .pointerInput(Unit){
+                        detectTransformGestures { _, pan, zoom, _ ->
+                            scale = (scale * zoom).coerceIn(1f, 4f)
+                            if (scale > 1f) { offX += pan.x; offY += pan.y }
+                            else { offX = 0f; offY = 0f }
+                        }
+                    }
+                    .pointerInput(Unit){ detectTapGestures(onDoubleTap={
+                        if (scale > 1f){ scale=1f; offX=0f; offY=0f } else scale=2.5f
+                    })},
+                    contentAlignment=Alignment.Center){
+                    AsyncImage(
+                        model=ImageRequest.Builder(LocalContext.current).data(File(photo.path)).crossfade(true).build(),
+                        contentDescription=photo.caption.ifBlank{"Photo"},
+                        contentScale=ContentScale.Fit,
+                        modifier=Modifier.fillMaxSize().graphicsLayer(
+                            scaleX=scale, scaleY=scale, translationX=offX, translationY=offY))
+                }
+            }
+            // Top bar
+            Row(Modifier.fillMaxWidth().statusBarsPadding().padding(horizontal=10.dp, vertical=8.dp),
+                verticalAlignment=Alignment.CenterVertically, horizontalArrangement=Arrangement.SpaceBetween){
+                Box(Modifier.clip(CircleShape).background(L0.copy(alpha=0.5f)).clickable{onClose()}.padding(8.dp)){
+                    Icon(Icons.Default.Close,"Fermer",Modifier.size(22.dp),tint=T1)
+                }
+                Text("${pagerState.currentPage+1} / ${photos.size}", style=Typo.labelMedium.copy(color=T1))
+                Row {
+                    val cur = photos.getOrNull(pagerState.currentPage)
+                    Box(Modifier.clip(CircleShape).background(L0.copy(alpha=0.5f)).clickable{ cur?.let{editingCaption=it} }.padding(8.dp)){
+                        Icon(Icons.Default.Edit,"Légende",Modifier.size(20.dp),tint=T1)
+                    }
+                    Spacer(Modifier.width(8.dp))
+                    Box(Modifier.clip(CircleShape).background(L0.copy(alpha=0.5f)).clickable{ cur?.let{delTarget=it} }.padding(8.dp)){
+                        Icon(Icons.Default.Delete,"Supprimer",Modifier.size(20.dp),tint=CRIM)
+                    }
+                }
+            }
+            // Caption bar
+            val cur = photos.getOrNull(pagerState.currentPage)
+            if (cur != null && cur.caption.isNotBlank()) {
+                Box(Modifier.align(Alignment.BottomCenter).fillMaxWidth()
+                    .background(Brush.verticalGradient(listOf(Color.Transparent, L0.copy(alpha=0.9f))))
+                    .navigationBarsPadding().padding(horizontal=24.dp, vertical=20.dp)){
+                    Text(cur.caption, style=Typo.bodyLarge.copy(color=T1),
+                        modifier=Modifier.align(Alignment.BottomCenter))
+                }
+            }
+        }
+    }
+}
+
+
+// ─────────────────────────────────────────────────────────────────────────────
+// MICRO-ANIMATIONS
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** Staggered entrance: fades + rises, delayed by item index for a cascade effect. */
+@Composable
+fun CascadeIn(index: Int, content: @Composable ()->Unit) {
+    var shown by remember { mutableStateOf(false) }
+    LaunchedEffect(Unit) {
+        delay((index.coerceAtMost(8) * 45).toLong())
+        shown = true
+    }
+    val alpha by animateFloatAsState(if (shown) 1f else 0f, tween(280), label="cascadeAlpha")
+    val ty by animateFloatAsState(if (shown) 0f else 24f, tween(320, easing=EaseOutCubic), label="cascadeY")
+    Box(Modifier.graphicsLayer { this.alpha = alpha; translationY = ty }) { content() }
+}
+
+
+// ─────────────────────────────────────────────────────────────────────────────
+// NPC CREATION CHOICE — import an Airealm card, or create blank
+// ─────────────────────────────────────────────────────────────────────────────
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun NpcChoiceSheet(onDismiss: ()->Unit, onImport: ()->Unit, onBlank: ()->Unit) {
+    ModalBottomSheet(onDismissRequest=onDismiss,
+        sheetState=rememberModalBottomSheetState(skipPartiallyExpanded=true),
+        containerColor=L3,
+        dragHandle={Box(Modifier.padding(vertical=10.dp).width(32.dp).height(3.dp)
+            .clip(RoundedCornerShape(2.dp)).background(L6))}) {
+        Column(Modifier.fillMaxWidth().padding(horizontal=18.dp).navigationBarsPadding().padding(bottom=12.dp)) {
+            Text("Nouveau personnage", style=Typo.headlineMedium.copy(color=T1))
+            Spacer(Modifier.height(4.dp))
+            Text("Importe une carte Airealm pour remplir la fiche automatiquement, ou pars d'une fiche vierge.",
+                style=Typo.bodySmall.copy(color=T3))
+            Spacer(Modifier.height(18.dp))
+            // Primary: import
+            Row(Modifier.fillMaxWidth().clip(RoundedCornerShape(14.dp))
+                .background(GOLD.copy(alpha=0.14f))
+                .border(1.dp, GOLD.copy(alpha=0.4f), RoundedCornerShape(14.dp))
+                .pressable(onClickLabel="Importer une carte"){onImport()}
+                .padding(16.dp),
+                verticalAlignment=Alignment.CenterVertically){
+                Box(Modifier.size(40.dp).clip(CircleShape).background(GOLD.copy(alpha=0.18f)),
+                    contentAlignment=Alignment.Center){
+                    Icon(Icons.Default.Download, null, Modifier.size(20.dp), tint=GOLD_HI)
+                }
+                Spacer(Modifier.width(14.dp))
+                Column(Modifier.weight(1f)){
+                    Text("Importer une carte Airealm", style=Typo.titleMedium.copy(color=T1))
+                    Text("Colle la carte, les champs se remplissent", style=Typo.bodySmall.copy(color=T3))
+                }
+                Icon(Icons.Default.ChevronRight, null, Modifier.size(20.dp), tint=GOLD.copy(alpha=0.6f))
+            }
+            Spacer(Modifier.height(10.dp))
+            // Secondary: blank
+            Row(Modifier.fillMaxWidth().clip(RoundedCornerShape(14.dp))
+                .background(L4)
+                .border(1.dp, L5, RoundedCornerShape(14.dp))
+                .pressable(onClickLabel="Créer vierge"){onBlank()}
+                .padding(16.dp),
+                verticalAlignment=Alignment.CenterVertically){
+                Box(Modifier.size(40.dp).clip(CircleShape).background(L5),
+                    contentAlignment=Alignment.Center){
+                    Icon(Icons.Default.PersonAdd, null, Modifier.size(20.dp), tint=T2)
+                }
+                Spacer(Modifier.width(14.dp))
+                Column(Modifier.weight(1f)){
+                    Text("Créer une fiche vierge", style=Typo.titleMedium.copy(color=T1))
+                    Text("Tout remplir à la main", style=Typo.bodySmall.copy(color=T3))
+                }
+                Icon(Icons.Default.ChevronRight, null, Modifier.size(20.dp), tint=T4)
+            }
+            Spacer(Modifier.height(8.dp))
+        }
+    }
 }
