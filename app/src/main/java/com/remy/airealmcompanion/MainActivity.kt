@@ -697,7 +697,6 @@ fun EngravedMonogram(
 }
 
 /** Press feedback: subtle scale-down, premium feel. Keeps ripple. */
-@Composable
 /**
  * A floating surface: deep soft shadow tinted by [glow], a glassy gradient fill,
  * and a hairline top highlight so the surface catches light. Creates real depth.
@@ -715,6 +714,7 @@ fun Modifier.floatingSurface(
         fill.copy(alpha = 0.92f)
     )))
 
+@Composable
 fun Modifier.pressable(onClickLabel: String? = null, onClick: () -> Unit): Modifier {
     val interaction = remember { MutableInteractionSource() }
     val pressed by interaction.collectIsPressedAsState()
