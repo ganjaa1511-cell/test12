@@ -450,11 +450,11 @@ class MainActivity : ComponentActivity() {
         setContent {
             MaterialTheme(colorScheme = scheme(), typography = Typo) {
                 Box(Modifier.fillMaxSize().background(L1).drawBehind {
-                    // Warm radial glow at top — like candlelight on a page
+                    // Warm copper halo behind the header — richer "codex" matter
                     drawRect(Brush.radialGradient(
-                        listOf(Color(0xFF1A140A).copy(alpha=0.6f), Color.Transparent),
-                        center = Offset(size.width*0.5f, size.height*0.10f),
-                        radius = size.maxDimension * 0.55f))
+                        listOf(Color(0xFF3A2418).copy(alpha=0.55f), Color(0xFF1A140A).copy(alpha=0.3f), Color.Transparent),
+                        center = Offset(size.width*0.5f, size.height*0.08f),
+                        radius = size.maxDimension * 0.5f))
                     // Vignette — corners sink into the void
                     drawRect(Brush.radialGradient(
                         listOf(Color.Transparent, L0.copy(alpha = 0.6f)),
@@ -462,12 +462,14 @@ class MainActivity : ComponentActivity() {
                         radius = size.maxDimension * 0.72f))
                     // Faint gold flecks — parchment grain, deterministic
                     var seed = 0x9E3779B9.toInt()
-                    repeat(60) {
+                    repeat(90) {
                         seed = seed * 1103515245 + 12345
                         val fx = ((seed ushr 16) and 0x7FFF) / 32767f * size.width
                         seed = seed * 1103515245 + 12345
                         val fy = ((seed ushr 16) and 0x7FFF) / 32767f * size.height
-                        drawCircle(GOLD.copy(alpha=0.035f), 0.8f, Offset(fx, fy))
+                        seed = seed * 1103515245 + 12345
+                        val a = 0.02f + ((seed ushr 16) and 0x7FFF) / 32767f * 0.03f
+                        drawCircle(GOLD.copy(alpha=a), 0.8f, Offset(fx, fy))
                     }
                 }) {
                     CompanionApp()
@@ -756,6 +758,20 @@ fun StatBox(value: String, label: String, accent: Color = GOLD, modifier: Modifi
 }
 
 // ── Label chip — reusable across list and detail ──────────────────────────────
+
+/** Unified info badge — icon + count in a soft tinted capsule. Same height everywhere. */
+@Composable
+fun MetaPill(icon: ImageVector, text: String, tint: Color) {
+    Row(Modifier.clip(RoundedCornerShape(999.dp))
+        .background(tint.copy(alpha=0.10f))
+        .border(1.dp, tint.copy(alpha=0.28f), RoundedCornerShape(999.dp))
+        .padding(horizontal=9.dp, vertical=4.dp),
+        verticalAlignment=Alignment.CenterVertically,
+        horizontalArrangement=Arrangement.spacedBy(5.dp)){
+        Icon(icon, null, Modifier.size(11.dp), tint=tint)
+        Text(text, style=Typo.labelSmall.copy(color=tint, letterSpacing=0.3.sp))
+    }
+}
 
 /** A social tag capsule. Colour hints at relationship type by keyword. */
 @Composable
@@ -1254,16 +1270,19 @@ fun CampaignListScreen(
                 Spacer(Modifier.width(10.dp)); Text("Exporter",style=Typo.bodyMedium.copy(color=T1))}}},
         confirmButton={TextButton(onClick={showOptions=false}){Text("Fermer")}})
 
+    val campaignListState = rememberLazyListState()
+    val fabExpanded by remember { derivedStateOf { campaignListState.firstVisibleItemIndex == 0 } }
     Scaffold(containerColor=Color.Transparent,
         floatingActionButton={
             ExtendedFloatingActionButton(onClick={showAdd=true},
+                expanded=fabExpanded,
                 containerColor=GOLD,contentColor=L0,
-                modifier=Modifier.navigationBarsPadding(),
+                modifier=Modifier.navigationBarsPadding()
+                    .shadow(16.dp, RoundedCornerShape(16.dp), ambientColor=GOLD, spotColor=L0),
                 icon={Icon(Icons.Default.Add,null,Modifier.size(20.dp))},
-                text={Text("Campagne",style=Typo.labelLarge.copy(fontFamily=CinzelFamily,fontSize=13.sp))},
-                shape=RoundedCornerShape(16.dp))
+                text={Text("Campagne",style=Typo.labelLarge.copy(fontFamily=CinzelFamily,fontSize=13.sp))})
         }) { pads ->
-        LazyColumn(Modifier.fillMaxSize(),
+        LazyColumn(Modifier.fillMaxSize(), state=campaignListState,
             contentPadding=PaddingValues(bottom=pads.calculateBottomPadding()+16.dp)) {
             item {
                 Box(Modifier.fillMaxWidth()
@@ -1402,21 +1421,11 @@ fun CampaignCard(c: Campaign, onOpen:()->Unit, onEdit:()->Unit, onDelete:()->Uni
                     Text(c.name,style=Typo.titleLarge.copy(color=T1),maxLines=1,overflow=TextOverflow.Ellipsis)
                     if(c.description.isNotBlank())
                         Text(c.description,style=Typo.bodySmall.copy(color=T3),maxLines=1,overflow=TextOverflow.Ellipsis,modifier=Modifier.padding(top=2.dp))
-                    Row(Modifier.padding(top=6.dp),horizontalArrangement=Arrangement.spacedBy(10.dp)){
-                        Row(verticalAlignment=Alignment.CenterVertically,horizontalArrangement=Arrangement.spacedBy(4.dp)){
-                            Icon(Icons.Default.Person,null,Modifier.size(11.dp),tint=GOLD_MID)
-                            Text("${c.npcs.size} NPC",style=Typo.labelSmall.copy(color=GOLD_MID))
-                        }
-                        Row(verticalAlignment=Alignment.CenterVertically,horizontalArrangement=Arrangement.spacedBy(4.dp)){
-                            Icon(Icons.Default.Place,null,Modifier.size(11.dp),tint=TEAL)
-                            Text("${c.locations.size} lieu",style=Typo.labelSmall.copy(color=TEAL))
-                        }
-                        if(c.labels.isNotEmpty()){
-                            Row(verticalAlignment=Alignment.CenterVertically,horizontalArrangement=Arrangement.spacedBy(4.dp)){
-                                Icon(Icons.Default.Label,null,Modifier.size(11.dp),tint=T3)
-                                Text("${c.labels.size} label${if(c.labels.size>1)"s" else ""}",style=Typo.labelSmall.copy(color=T3))
-                            }
-                        }
+                    Row(Modifier.padding(top=8.dp),horizontalArrangement=Arrangement.spacedBy(7.dp)){
+                        MetaPill(Icons.Default.Person, "${c.npcs.size}", GOLD)
+                        MetaPill(Icons.Default.Place, "${c.locations.size}", TEAL)
+                        if(c.labels.isNotEmpty())
+                            MetaPill(Icons.Default.Label, "${c.labels.size}", T3)
                     }
                 }
                 Column(horizontalAlignment=Alignment.CenterHorizontally,modifier=Modifier.padding(end=4.dp,top=4.dp)){
@@ -1603,7 +1612,7 @@ fun CampaignDetailScreen(
                         getPreview={it.shortCard},getTags={it.tags},
                         getLabels={ids->c.labels.filter{l->l.id in ids}},
                         getLabelIds={it.labelIds},
-                        getPhoto={it.photoUris.firstOrNull()},
+                        getPhoto={it.photoUris.firstOrNull()}, getFocal={it.heroFocal},
                         onOpen={onOpenNpc(it)},onDel={onDelNpc(it)},
                         bottomPad=pads.calculateBottomPadding())
                     1 -> EntityList(filteredLocs.sortedBy{it.name.lowercase()}, typeIcon=Icons.Default.Place,
@@ -1636,7 +1645,7 @@ fun <T> EntityList(
     getPreview:(T)->String, getTags:(T)->String,
     getLabels:(List<String>)->List<CampaignLabel>, getLabelIds:(T)->List<String>,
     getPhoto:(T)->String?, onOpen:(T)->Unit, onDel:(T)->Unit, bottomPad: Dp,
-    typeIcon: ImageVector = Icons.Default.Person
+    typeIcon: ImageVector = Icons.Default.Person, getFocal:(T)->Float = { 0.5f }
 ) {
     var delTarget by remember{mutableStateOf<T?>(null)}
     delTarget?.let{t-> ConfirmDelete("Supprimer ?","« ${getName(t)} » sera supprimé.",
@@ -1661,7 +1670,7 @@ fun <T> EntityList(
                 CascadeIn(index) {
                     Box(Modifier.animateItem()) {
                         EntityCard(getName(item),getSub(item),getPreview(item),getTags(item),
-                            labels,getPhoto(item),accent,typeIcon,{onOpen(item)},{delTarget=item})
+                            labels,getPhoto(item),accent,typeIcon,getFocal(item),{onOpen(item)},{delTarget=item})
                     }
                 }
             }
@@ -1674,7 +1683,7 @@ fun EntityCard(
     name: String, sub: String, preview: String, tags: String,
     labels: List<CampaignLabel>, photoUri: String?,
     accent: Color, typeIcon: ImageVector = Icons.Default.Person,
-    onClick:()->Unit, onDel:()->Unit
+    focal: Float = 0.5f, onClick:()->Unit, onDel:()->Unit
 ) {
     val seal = sealHue(name)
     Box(Modifier.fillMaxWidth().padding(horizontal=16.dp, vertical=7.dp)
@@ -1691,11 +1700,24 @@ fun EntityCard(
                     AsyncImage(
                         model=ImageRequest.Builder(LocalContext.current).data(File(photoUri)).crossfade(true).build(),
                         contentDescription=null, contentScale=ContentScale.Crop,
+                        alignment=BiasAlignment(0f, focal*2f - 1f),
                         modifier=Modifier.fillMaxSize())
                 } else {
-                    Box(Modifier.fillMaxSize().background(nameGrad(name))){
+                    // Richer placeholder: soft coloured halo + very subtle grain + avatar chip + label
+                    Box(Modifier.fillMaxSize().background(nameGrad(name)).drawBehind{
+                        val g=seal.copy(alpha=0.05f); val s=20.dp.toPx(); var y=0f
+                        while(y<size.height){var x=if((y/s).toInt()%2==0)0f else s/2
+                            while(x<size.width){drawCircle(g,0.8f,Offset(x,y));x+=s};y+=s}
+                    }){
                         EngravedMonogram(name.take(1).uppercase(), seal, 120.sp,
-                            Modifier.align(Alignment.Center), baseAlpha=0.22f)
+                            Modifier.align(Alignment.Center), baseAlpha=0.20f)
+                        // "Aucune photo" hint, bottom-right
+                        Row(Modifier.align(Alignment.BottomEnd).padding(12.dp),
+                            verticalAlignment=Alignment.CenterVertically,
+                            horizontalArrangement=Arrangement.spacedBy(4.dp)){
+                            Icon(Icons.Default.AddAPhoto, null, Modifier.size(11.dp), tint=T4)
+                            Text("Aucune photo", style=Typo.labelSmall.copy(color=T4))
+                        }
                     }
                 }
                 // Bottom scrim so the name is always readable over any photo
@@ -2041,18 +2063,19 @@ fun SearchField(query: String, onChange: (String)->Unit, modifier: Modifier = Mo
         value = query, onValueChange = onChange,
         modifier = modifier.fillMaxWidth(),
         singleLine = true,
-        placeholder = { Text("Rechercher partout…", color = T4,
-            style = Typo.bodyMedium.copy(fontStyle = FontStyle.Italic)) },
-        leadingIcon = { Icon(Icons.Default.Search, null, Modifier.size(18.dp), tint = GOLD_MID) },
+        placeholder = { Text("Rechercher un personnage, un lieu…", color = T4,
+            style = Typo.bodySmall.copy(fontStyle = FontStyle.Italic)) },
+        leadingIcon = { Icon(Icons.Default.Search, null, Modifier.size(16.dp), tint = GOLD_MID) },
         trailingIcon = {
-            if (query.isNotBlank()) IconButton(onClick = { onChange("") }) {
-                Icon(Icons.Default.Close, "Effacer la recherche", Modifier.size(16.dp), tint = T3)
+            if (query.isNotBlank()) Box(Modifier.padding(end=4.dp).size(26.dp).clip(CircleShape)
+                .background(L5).clickable{ onChange("") }, contentAlignment=Alignment.Center){
+                Icon(Icons.Default.Close, "Effacer la recherche", Modifier.size(13.dp), tint = T2)
             }
         },
-        shape = RoundedCornerShape(12.dp),
+        shape = RoundedCornerShape(14.dp),
         colors = OutlinedTextFieldDefaults.colors(
-            focusedBorderColor = GOLD, unfocusedBorderColor = L5,
-            focusedContainerColor = L3, unfocusedContainerColor = L2, cursorColor = GOLD),
+            focusedBorderColor = GOLD.copy(alpha=0.7f), unfocusedBorderColor = L5.copy(alpha=0.6f),
+            focusedContainerColor = L3, unfocusedContainerColor = L2.copy(alpha=0.6f), cursorColor = GOLD),
         textStyle = Typo.bodyMedium.copy(color = T1)
     )
 }
