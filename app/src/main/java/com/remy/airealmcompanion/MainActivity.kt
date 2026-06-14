@@ -753,7 +753,6 @@ fun StatBox(value: String, label: String, accent: Color = GOLD, modifier: Modifi
 
 // ── Label chip — reusable across list and detail ──────────────────────────────
 
-@Composable
 /** A social tag capsule. Colour hints at relationship type by keyword. */
 @Composable
 fun TagCapsule(text: String) {
