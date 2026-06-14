@@ -146,15 +146,15 @@ private fun scheme() = darkColorScheme(
 )
 
 private val Typo = Typography(
-    displayMedium  = TextStyle(fontFamily = CinzelFamily, fontWeight = FontWeight.ExtraBold, fontSize = 40.sp, lineHeight = 44.sp, letterSpacing = (-0.5).sp),
-    headlineLarge  = TextStyle(fontFamily = CinzelFamily, fontWeight = FontWeight.Bold,      fontSize = 26.sp, lineHeight = 32.sp),
-    headlineMedium = TextStyle(fontFamily = CinzelFamily, fontWeight = FontWeight.Bold,      fontSize = 21.sp, lineHeight = 27.sp),
+    displayMedium  = TextStyle(fontFamily = CinzelFamily, fontWeight = FontWeight.ExtraBold, fontSize = 46.sp, lineHeight = 48.sp, letterSpacing = (-1).sp),
+    headlineLarge  = TextStyle(fontFamily = CinzelFamily, fontWeight = FontWeight.Bold,      fontSize = 30.sp, lineHeight = 34.sp, letterSpacing = (-0.5).sp),
+    headlineMedium = TextStyle(fontFamily = CinzelFamily, fontWeight = FontWeight.Bold,      fontSize = 22.sp, lineHeight = 28.sp),
     headlineSmall  = TextStyle(fontFamily = CinzelFamily, fontWeight = FontWeight.SemiBold,  fontSize = 18.sp, lineHeight = 24.sp),
     titleLarge     = TextStyle(fontFamily = CinzelFamily, fontWeight = FontWeight.Bold,      fontSize = 16.sp, lineHeight = 22.sp),
     titleMedium    = TextStyle(fontFamily = CinzelFamily, fontWeight = FontWeight.SemiBold,  fontSize = 14.sp, lineHeight = 20.sp),
-    labelLarge     = TextStyle(fontFamily = FontFamily.SansSerif, fontWeight = FontWeight.SemiBold, fontSize = 11.sp, letterSpacing = 1.8.sp),
-    labelMedium    = TextStyle(fontFamily = FontFamily.SansSerif, fontWeight = FontWeight.Medium,   fontSize = 10.sp, letterSpacing = 1.6.sp),
-    labelSmall     = TextStyle(fontFamily = FontFamily.SansSerif, fontWeight = FontWeight.Normal,   fontSize = 10.sp, letterSpacing = 1.3.sp),
+    labelLarge     = TextStyle(fontFamily = FontFamily.SansSerif, fontWeight = FontWeight.SemiBold, fontSize = 10.sp, letterSpacing = 2.4.sp),
+    labelMedium    = TextStyle(fontFamily = FontFamily.SansSerif, fontWeight = FontWeight.Medium,   fontSize = 9.sp,  letterSpacing = 2.0.sp),
+    labelSmall     = TextStyle(fontFamily = FontFamily.SansSerif, fontWeight = FontWeight.Normal,   fontSize = 9.sp,  letterSpacing = 1.6.sp),
     bodyLarge      = TextStyle(fontFamily = AlegreyaFamily, fontWeight = FontWeight.Normal,   fontSize = 16.sp, lineHeight = 25.sp),
     bodyMedium     = TextStyle(fontFamily = AlegreyaFamily, fontWeight = FontWeight.Normal,   fontSize = 14.sp, lineHeight = 21.sp),
     bodySmall      = TextStyle(fontFamily = FontFamily.SansSerif, fontWeight = FontWeight.Normal,   fontSize = 11.sp, lineHeight = 17.sp),
@@ -541,8 +541,10 @@ fun CompanionApp() {
     }
 
     AnimatedContent(targetState = screen, transitionSpec = {
-        (fadeIn(tween(200)) + slideInHorizontally(tween(240, easing = EaseOutCubic)) { it / 10 })
-            .togetherWith(fadeOut(tween(160)) + slideOutHorizontally(tween(200)) { -it / 10 })
+        // Social-premium feel: content fades + gently scales up into place
+        (fadeIn(tween(260)) + scaleIn(tween(300, easing = EaseOutCubic), initialScale = 0.97f)
+            + slideInHorizontally(tween(280, easing = EaseOutCubic)) { it / 12 })
+            .togetherWith(fadeOut(tween(160)) + scaleOut(tween(200), targetScale = 0.99f))
     }, label = "nav") { s ->
         when (s) {
             is Screen.Campaigns -> CampaignListScreen(campaigns,
@@ -696,6 +698,23 @@ fun EngravedMonogram(
 
 /** Press feedback: subtle scale-down, premium feel. Keeps ripple. */
 @Composable
+/**
+ * A floating surface: deep soft shadow tinted by [glow], a glassy gradient fill,
+ * and a hairline top highlight so the surface catches light. Creates real depth.
+ */
+fun Modifier.floatingSurface(
+    shape: Shape,
+    glow: Color = GOLD,
+    elevation: Dp = 14.dp,
+    fill: Color = L2
+): Modifier = this
+    .shadow(elevation, shape, ambientColor = glow.copy(alpha = 0.55f), spotColor = Color.Black)
+    .clip(shape)
+    .background(Brush.verticalGradient(listOf(
+        fill.copy(alpha = 1f),
+        fill.copy(alpha = 0.92f)
+    )))
+
 fun Modifier.pressable(onClickLabel: String? = null, onClick: () -> Unit): Modifier {
     val interaction = remember { MutableInteractionSource() }
     val pressed by interaction.collectIsPressedAsState()
@@ -941,11 +960,10 @@ fun LoreSection(
 ) {
     var expanded by remember { mutableStateOf(defaultExpanded) }
     val haptic = LocalHapticFeedback.current
-    // Each section is now an elevated CARD — "social profile" feel, not a flat list
-    Column(Modifier.fillMaxWidth().padding(horizontal=14.dp, vertical=5.dp)
-        .clip(RoundedCornerShape(16.dp))
-        .background(L2)
-        .border(1.dp, if(expanded) accent.copy(alpha=0.22f) else L5, RoundedCornerShape(16.dp))) {
+    // Each section floats — soft shadow + glassy fill + accent hairline when open
+    Column(Modifier.fillMaxWidth().padding(horizontal=14.dp, vertical=6.dp)
+        .floatingSurface(RoundedCornerShape(18.dp), glow=accent, elevation=if(expanded) 12.dp else 6.dp, fill=L2)
+        .border(1.dp, if(expanded) accent.copy(alpha=0.28f) else L5.copy(alpha=0.5f), RoundedCornerShape(18.dp))) {
         Row(Modifier.fillMaxWidth()
             .semantics { stateDescription = if (expanded) "Section dépliée" else "Section repliée" }
             .clickable(onClickLabel = if (expanded) "Replier" else "Déplier"){
@@ -1686,16 +1704,14 @@ fun EntityCard(
     focal: Float = 0.5f, onClick:()->Unit, onDel:()->Unit
 ) {
     val seal = sealHue(name)
-    Box(Modifier.fillMaxWidth().padding(horizontal=16.dp, vertical=7.dp)
-        .shadow(12.dp, RoundedCornerShape(20.dp), ambientColor=seal.copy(alpha=0.5f), spotColor=L0)
-        .clip(RoundedCornerShape(20.dp))
-        .background(L2)
-        .border(1.dp, L5, RoundedCornerShape(20.dp))
+    Box(Modifier.fillMaxWidth().padding(horizontal=16.dp, vertical=9.dp)
+        .floatingSurface(RoundedCornerShape(22.dp), glow=seal, elevation=18.dp, fill=L2)
+        .border(1.dp, Brush.verticalGradient(listOf(seal.copy(alpha=0.30f), L5.copy(alpha=0.4f))), RoundedCornerShape(22.dp))
         .pressable(onClickLabel="Ouvrir"){onClick()}) {
         Column {
             // ── Framed banner — photo fills, name overlaid at bottom ──────────
-            Box(Modifier.fillMaxWidth().height(168.dp)
-                .clip(RoundedCornerShape(topStart=20.dp, topEnd=20.dp))) {
+            Box(Modifier.fillMaxWidth().height(176.dp)
+                .clip(RoundedCornerShape(topStart=22.dp, topEnd=22.dp))) {
                 if(photoUri!=null){
                     AsyncImage(
                         model=ImageRequest.Builder(LocalContext.current).data(File(photoUri)).crossfade(true).build(),
@@ -2283,8 +2299,9 @@ fun parseAirealmCard(name: String, raw: String): Npc {
     (DNA_KEYS + INERTIA_KEYS).forEach { k -> grab(k).ifBlank { null }?.let { dnaMap[k] = it } }
     // Facets : détection élargie — toute ligne contenant un de ces marqueurs de stat
     val facetMarkers = listOf("Attraction","Intimacy","Affinity","Trust","Comfort","Respect","Suspicion","Jealousy")
-    val facetLine = lines.firstOrNull { l -> facetMarkers.count { l.contains(it, ignoreCase = true) } >= 2 }
-    if (!facetLine.isNullOrBlank()) dnaMap["Facets"] = facetLine
+    // Facets span TWO lines on Airealm cards — collect every line that holds ≥2 markers
+    val facetLines = lines.filter { l -> facetMarkers.count { l.contains(it, ignoreCase = true) } >= 2 }
+    if (facetLines.isNotEmpty()) dnaMap["Facets"] = facetLines.joinToString("\n")
 
     // Relations laissé VIDE à l'import (l'utilisateur le remplit lui-même)
     val relationships = ""
