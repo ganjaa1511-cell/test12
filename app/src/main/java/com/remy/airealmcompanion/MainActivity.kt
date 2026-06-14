@@ -24,6 +24,8 @@ import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.gestures.detectTransformGestures
+import androidx.compose.foundation.gestures.detectVerticalDragGestures
+import androidx.compose.ui.BiasAlignment
 import androidx.compose.animation.core.animateIntAsState
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.grid.GridCells
@@ -199,7 +201,8 @@ data class Npc(
     val sceneHistory: String = "", val tags: String = "",
     val dna: Map<String,String> = emptyMap(),     // structured Airealm fields, one line each
     val labelIds: List<String> = emptyList(),
-    val photoUris: List<String> = emptyList()
+    val photoUris: List<String> = emptyList(),
+    val heroFocal: Float = 0.5f                   // vertical focal point of hero photo (0=haut, 1=bas)
 )
 
 /** Canonical Airealm DNA / INERTIA field keys, in display order. */
@@ -355,6 +358,7 @@ private fun JSONObject.toNpc(fb: String) = Npc(
     id = optString("id").ifBlank { UUID.randomUUID().toString() },
     campaignId = optString("campaignId", fb),
     name = optString("name",""), role = optString("role",""), major = optString("major",""),
+    heroFocal = optDouble("heroFocal", 0.5).toFloat(),
     shortCard = optString("shortCard",""), fullCard = optString("fullCard",""),
     relationships = optString("relationships",""), secrets = optString("secrets",""),
     sceneHistory = optString("sceneHistory",""), tags = optString("tags",""),
@@ -411,7 +415,7 @@ private fun CampaignLabel.toJson() = JSONObject().apply {
 
 private fun Npc.toJson() = JSONObject().apply {
     put("id",id); put("campaignId",campaignId); put("name",name); put("role",role)
-    put("major",major)
+    put("major",major); put("heroFocal", heroFocal.toDouble())
     put("shortCard",shortCard); put("fullCard",fullCard)
     put("relationships",relationships); put("secrets",secrets)
     put("sceneHistory",sceneHistory); put("tags",tags)
@@ -988,29 +992,68 @@ fun LoreField(
 @Composable
 fun EntityHero(
     name: String, subtitle: String, firstPhoto: String?,
-    accent: Color, onBack: ()->Unit, action: @Composable ()->Unit = {}
+    accent: Color, onBack: ()->Unit, action: @Composable ()->Unit = {},
+    focal: Float = 0.5f, onFocalChange: ((Float)->Unit)? = null
 ) {
     var heroShown by remember { mutableStateOf(false) }
     LaunchedEffect(Unit) { heroShown = true }
     val heroAlpha by animateFloatAsState(if (heroShown) 1f else 0f, tween(500), label="heroFade")
+    var adjusting by remember { mutableStateOf(false) }
+    var liveFocal by remember(focal) { mutableStateOf(focal) }
     Box(Modifier.fillMaxWidth().height(310.dp).graphicsLayer{ alpha = heroAlpha }) {
         if (firstPhoto != null) {
             val model = ImageRequest.Builder(LocalContext.current).data(File(firstPhoto)).crossfade(true).build()
+            // Blurred ambiance behind
             AsyncImage(
                 model=model,
                 contentDescription=null,
                 contentScale=ContentScale.Crop,
-                modifier=Modifier.fillMaxSize().blur(18.dp).alpha(0.42f)
+                modifier=Modifier.fillMaxSize().blur(18.dp).alpha(if(adjusting) 0.15f else 0.42f)
             )
             Box(Modifier.fillMaxSize().background(Brush.radialGradient(
                 listOf(Color.Transparent, L0.copy(alpha=0.72f)), radius = 760f
             )))
+            // Foreground photo — CROP with adjustable vertical focal so the face can be framed
+            val dragMod = if (adjusting)
+                Modifier.pointerInput(Unit){
+                    detectVerticalDragGestures { _, delta ->
+                        // drag down → reveal higher part (focal decreases)
+                        liveFocal = (liveFocal - delta / 600f).coerceIn(0f, 1f)
+                    }
+                } else Modifier
             AsyncImage(
                 model=model,
                 contentDescription=null,
-                contentScale=ContentScale.Fit,
-                modifier=Modifier.fillMaxSize().padding(top=30.dp, bottom=70.dp, start=18.dp, end=18.dp)
+                contentScale=ContentScale.Crop,
+                alignment=BiasAlignment(0f, liveFocal*2f - 1f),  // -1=top,0=center,1=bottom
+                modifier=Modifier.fillMaxSize().then(dragMod)
             )
+            // Adjust controls
+            if (onFocalChange != null) {
+                if (adjusting) {
+                    // guide overlay
+                    Box(Modifier.fillMaxSize().background(L0.copy(alpha=0.15f)))
+                    Box(Modifier.align(Alignment.TopCenter).statusBarsPadding().padding(top=48.dp)
+                        .clip(RoundedCornerShape(999.dp)).background(L0.copy(alpha=0.65f))
+                        .padding(horizontal=14.dp, vertical=8.dp)){
+                        Text("Glisse pour cadrer le visage", style=Typo.labelMedium.copy(color=T1))
+                    }
+                    // Save / cancel bottom
+                    Row(Modifier.align(Alignment.BottomCenter).padding(bottom=80.dp),
+                        horizontalArrangement=Arrangement.spacedBy(10.dp)){
+                        Box(Modifier.clip(RoundedCornerShape(999.dp)).background(L0.copy(alpha=0.7f))
+                            .clickable{ liveFocal=focal; adjusting=false }
+                            .padding(horizontal=16.dp, vertical=9.dp)){
+                            Text("Annuler", style=Typo.labelMedium.copy(color=T2))
+                        }
+                        Box(Modifier.clip(RoundedCornerShape(999.dp)).background(accent)
+                            .clickable{ onFocalChange(liveFocal); adjusting=false }
+                            .padding(horizontal=18.dp, vertical=9.dp)){
+                            Text("Valider", style=Typo.labelMedium.copy(color=L0))
+                        }
+                    }
+                }
+            }
         } else {
             val seal = sealHue(name)
             Box(Modifier.fillMaxSize().background(nameGrad(name)).drawBehind {
@@ -1036,14 +1079,24 @@ fun EntityHero(
                     Text("Retour",style=Typo.labelMedium.copy(color=T1))
                 }
             }
-            Box(Modifier.clip(RoundedCornerShape(999.dp)).background(L0.copy(alpha=0.55f))){ action() }
+            Row(verticalAlignment=Alignment.CenterVertically, horizontalArrangement=Arrangement.spacedBy(6.dp)){
+                if (firstPhoto != null && onFocalChange != null && !adjusting) {
+                    Box(Modifier.clip(RoundedCornerShape(999.dp)).background(L0.copy(alpha=0.55f))
+                        .clickable{ adjusting=true }.padding(8.dp)){
+                        Icon(Icons.Default.Crop, "Cadrer la photo", Modifier.size(17.dp), tint=T1)
+                    }
+                }
+                Box(Modifier.clip(RoundedCornerShape(999.dp)).background(L0.copy(alpha=0.55f))){ action() }
+            }
         }
-        Column(Modifier.align(Alignment.BottomStart).padding(start=22.dp,end=22.dp,bottom=20.dp)) {
-            if(subtitle.isNotBlank()) Text(subtitle.uppercase(),
-                style=Typo.labelLarge.copy(color=accent,letterSpacing=2.sp),
-                modifier=Modifier.padding(bottom=5.dp))
-            Text(name,style=Typo.headlineLarge.copy(color=T1,shadow=Shadow(L0,Offset(0f,2f),8f)),
-                modifier=Modifier.semantics{heading()})
+        if (!adjusting) {
+            Column(Modifier.align(Alignment.BottomStart).padding(start=22.dp,end=22.dp,bottom=20.dp)) {
+                if(subtitle.isNotBlank()) Text(subtitle.uppercase(),
+                    style=Typo.labelLarge.copy(color=accent,letterSpacing=2.sp),
+                    modifier=Modifier.padding(bottom=5.dp))
+                Text(name,style=Typo.headlineLarge.copy(color=T1,shadow=Shadow(L0,Offset(0f,2f),8f)),
+                    modifier=Modifier.semantics{heading()})
+            }
         }
     }
 }
@@ -1739,6 +1792,7 @@ fun NpcScreen(
         EntityHero(name=e.name.ifBlank{"NPC"},
             subtitle=listOf(e.role,e.major).filter{it.isNotBlank()}.joinToString(" · "),
             firstPhoto=npc.photoUris.firstOrNull(),accent=GOLD,onBack=onBack,
+            focal=e.heroFocal, onFocalChange={ e=e.copy(heroFocal=it) },
             action={IconButton(onClick={
                 val clip=ClipData.newPlainText("NPC",export())
                 (ctx.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager).setPrimaryClip(clip)
