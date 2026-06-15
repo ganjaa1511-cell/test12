@@ -668,6 +668,14 @@ private val SEAL_HUES = listOf(
     Color(0xFFB07848), // warm ochre
     Color(0xFF566270), // slate
 )
+/** Turns a raw Airealm header "| 18yo | Freshman | Major: X |" into clean "18yo · Freshman · X". */
+fun prettyHeader(raw: String): String =
+    raw.split("|").map { it.trim() }
+        .filter { it.isNotBlank() }
+        .joinToString(" · ") { seg ->
+            if (seg.contains(":")) seg.substringAfter(":").trim() else seg
+        }
+
 private fun sealHue(name: String): Color =
     SEAL_HUES[(name.fold(0){a,c->a*31+c.code} and 0x7FFFFFFF) % SEAL_HUES.size]
 
@@ -1327,17 +1335,22 @@ fun CampaignListScreen(
                                 }
                                 Spacer(Modifier.height(4.dp))
                                 // Title with soft glow behind
-                                Box{
-                                    // Breathing halo — opacity drifts slowly 0.10→0.22
+                                Box(contentAlignment=Alignment.CenterStart){
+                                    // Breathing halo — now a real glowing aura behind the title
                                     val breathe = rememberInfiniteTransition(label="halo")
                                     val haloA by breathe.animateFloat(
-                                        initialValue=0.10f, targetValue=0.24f,
+                                        initialValue=0.30f, targetValue=0.62f,
                                         animationSpec=infiniteRepeatable(
-                                            tween(5500, easing=FastOutSlowInEasing),
+                                            tween(4200, easing=FastOutSlowInEasing),
                                             repeatMode=RepeatMode.Reverse), label="haloA")
+                                    // soft radial bloom
+                                    Box(Modifier.matchParentSize().offset(y=2.dp).blur(38.dp)
+                                        .background(Brush.radialGradient(
+                                            listOf(GOLD.copy(alpha=haloA*0.5f), Color.Transparent))))
+                                    // glow copy of the text
                                     Text("Codex",style=Typo.displayMedium.copy(
                                         color=GOLD_HI.copy(alpha=haloA), fontSize=44.sp),
-                                        modifier=Modifier.offset(y=1.dp).blur(22.dp))
+                                        modifier=Modifier.blur(20.dp))
                                     Text("Codex",style=Typo.displayMedium.copy(color=GOLD_HI, fontSize=44.sp))
                                 }
                                 Spacer(Modifier.height(8.dp))
@@ -1434,44 +1447,61 @@ fun CampaignListScreen(
 @Composable
 fun CampaignCard(c: Campaign, onOpen:()->Unit, onEdit:()->Unit, onDelete:()->Unit) {
     val seal = sealHue(c.name)
-    Box(Modifier.fillMaxWidth().padding(horizontal=14.dp,vertical=7.dp)
-        .shadow(10.dp, RoundedCornerShape(16.dp), ambientColor=seal, spotColor=L0)
-        .clip(RoundedCornerShape(16.dp)).pressable(onClickLabel="Ouvrir la campagne"){onOpen()}) {
-        Box(Modifier.fillMaxWidth().height(78.dp).background(nameGrad(c.name))) {
-            if(c.photoUri!=null){
-                AsyncImage(model=ImageRequest.Builder(LocalContext.current).data(File(c.photoUri)).crossfade(true).build(),
-                    contentDescription=null, contentScale=ContentScale.Crop, modifier=Modifier.fillMaxSize())
-            } else {
-                EngravedMonogram(c.name.take(1).uppercase(), seal, 92.sp,
-                    Modifier.align(Alignment.CenterEnd).padding(end=14.dp), baseAlpha=0.18f)
-            }
-            // top light edge
-            Box(Modifier.fillMaxWidth().height(1.dp).align(Alignment.TopCenter).background(
-                Brush.horizontalGradient(listOf(Color.Transparent, seal.copy(alpha=0.5f), Color.Transparent))))
-            Box(Modifier.fillMaxSize().background(
-                Brush.verticalGradient(listOf(Color.Transparent,L2.copy(alpha=0.85f)))))
-        }
-        Column(Modifier.fillMaxWidth().padding(top=58.dp)
-            .clip(RoundedCornerShape(bottomStart=16.dp,bottomEnd=16.dp))
-            .background(L2).border(1.dp,L5,RoundedCornerShape(bottomStart=16.dp,bottomEnd=16.dp))) {
-            Row(Modifier.fillMaxWidth()) {
-                Box(Modifier.width(3.dp).height(56.dp).background(
-                    Brush.verticalGradient(listOf(GOLD.copy(alpha=0f),GOLD.copy(alpha=0.7f),GOLD.copy(alpha=0f)))))
-                Column(Modifier.weight(1f).padding(start=12.dp,end=8.dp,top=10.dp,bottom=10.dp)) {
-                    Text(c.name,style=Typo.titleLarge.copy(color=T1),maxLines=1,overflow=TextOverflow.Ellipsis)
-                    if(c.description.isNotBlank())
-                        Text(c.description,style=Typo.bodySmall.copy(color=T3),maxLines=1,overflow=TextOverflow.Ellipsis,modifier=Modifier.padding(top=2.dp))
-                    Row(Modifier.padding(top=8.dp),horizontalArrangement=Arrangement.spacedBy(7.dp)){
-                        MetaPill(Icons.Default.Person, "${c.npcs.size}", GOLD)
-                        MetaPill(Icons.Default.Place, "${c.locations.size}", TEAL)
-                        if(c.labels.isNotEmpty())
-                            MetaPill(Icons.Default.Label, "${c.labels.size}", T3)
+    var menuOpen by remember { mutableStateOf(false) }
+    // COVER-STYLE campaign card: big title over art, narrative subtitle, metadata below
+    Box(Modifier.fillMaxWidth().padding(horizontal=16.dp,vertical=9.dp)
+        .floatingSurface(RoundedCornerShape(22.dp), glow=seal, elevation=18.dp, fill=L2)
+        .border(1.dp, Brush.verticalGradient(listOf(seal.copy(alpha=0.30f), L5.copy(alpha=0.4f))), RoundedCornerShape(22.dp))
+        .pressable(onClickLabel="Ouvrir la campagne"){onOpen()}) {
+        Column {
+            // ── Cover area: photo/monogram + title overlaid ──────────────────
+            Box(Modifier.fillMaxWidth().height(150.dp)
+                .clip(RoundedCornerShape(topStart=22.dp, topEnd=22.dp))) {
+                if(c.photoUri!=null){
+                    AsyncImage(model=ImageRequest.Builder(LocalContext.current).data(File(c.photoUri)).crossfade(true).build(),
+                        contentDescription=null, contentScale=ContentScale.Crop, modifier=Modifier.fillMaxSize())
+                } else {
+                    Box(Modifier.fillMaxSize().background(nameGrad(c.name))){
+                        EngravedMonogram(c.name.take(1).uppercase(), seal, 110.sp,
+                            Modifier.align(Alignment.CenterEnd).padding(end=18.dp), baseAlpha=0.13f)
                     }
                 }
-                Column(horizontalAlignment=Alignment.CenterHorizontally,modifier=Modifier.padding(end=4.dp,top=4.dp)){
-                    IconButton(onClick=onEdit,Modifier.size(44.dp)){Icon(Icons.Default.Edit,"Modifier la campagne",Modifier.size(18.dp),tint=T3)}
-                    IconButton(onClick=onDelete,Modifier.size(44.dp)){Icon(Icons.Default.Delete,"Supprimer la campagne",Modifier.size(18.dp),tint=CRIM.copy(alpha=0.8f))}
+                // scrim for legibility
+                Box(Modifier.fillMaxSize().background(Brush.verticalGradient(
+                    0.35f to Color.Transparent, 1f to L0.copy(alpha=0.92f))))
+                // title + narrative subtitle, bottom-left
+                Column(Modifier.align(Alignment.BottomStart).padding(start=20.dp, end=56.dp, bottom=16.dp)){
+                    Text(c.name, style=Typo.headlineMedium.copy(color=Color.White,
+                        shadow=Shadow(L0, Offset(0f,2f), 12f)), maxLines=1, overflow=TextOverflow.Ellipsis)
+                    if(c.description.isNotBlank())
+                        Text(c.description, style=Typo.bodySmall.copy(color=T2.copy(alpha=0.9f),
+                            fontStyle=FontStyle.Italic), maxLines=1, overflow=TextOverflow.Ellipsis,
+                            modifier=Modifier.padding(top=3.dp))
                 }
+                // discreet ⋮ menu, top-right
+                Box(Modifier.align(Alignment.TopEnd).padding(8.dp)){
+                    Box(Modifier.size(36.dp).clip(CircleShape).background(L0.copy(alpha=0.4f))
+                        .clickable{ menuOpen=true }, contentAlignment=Alignment.Center){
+                        Icon(Icons.Default.MoreVert, "Options", Modifier.size(18.dp), tint=T1)
+                    }
+                    DropdownMenu(expanded=menuOpen, onDismissRequest={menuOpen=false},
+                        containerColor=L3){
+                        DropdownMenuItem(text={Text("Modifier", color=T1)},
+                            leadingIcon={Icon(Icons.Default.Edit,null,Modifier.size(18.dp),tint=T2)},
+                            onClick={menuOpen=false; onEdit()})
+                        DropdownMenuItem(text={Text("Supprimer", color=CRIM)},
+                            leadingIcon={Icon(Icons.Default.Delete,null,Modifier.size(18.dp),tint=CRIM)},
+                            onClick={menuOpen=false; onDelete()})
+                    }
+                }
+            }
+            // ── Metadata strip below ─────────────────────────────────────────
+            Row(Modifier.fillMaxWidth().padding(start=20.dp,end=20.dp,top=12.dp,bottom=14.dp),
+                horizontalArrangement=Arrangement.spacedBy(7.dp)){
+                MetaPill(Icons.Default.Person, "${c.npcs.size}", GOLD)
+                MetaPill(Icons.Default.Place, "${c.locations.size}", TEAL)
+                if(c.labels.isNotEmpty())
+                    MetaPill(Icons.Default.Label, "${c.labels.size}", T3)
             }
         }
     }
@@ -1544,6 +1574,8 @@ fun CampaignDetailScreen(
 ) {
     val ctx = LocalContext.current
     var tab          by remember{mutableIntStateOf(0)}
+    val listStates = listOf(rememberLazyListState(), rememberLazyListState(),
+                            rememberLazyListState(), rememberLazyListState())
     var showAddNpc     by remember{mutableStateOf(false)}
     var showAddLoc     by remember{mutableStateOf(false)}
     var showAddJournal by remember{mutableStateOf(false)}
@@ -1567,13 +1599,17 @@ fun CampaignDetailScreen(
     Scaffold(containerColor=Color.Transparent,
         floatingActionButton={
             val galleryPicker = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()){ it?.let(onAddGalleryPhoto) }
+            val fabExpanded by remember { derivedStateOf {
+                listStates[tab].firstVisibleItemIndex == 0 && listStates[tab].firstVisibleItemScrollOffset < 40
+            } }
             ExtendedFloatingActionButton(
                 onClick={when(tab){0->showNpcChoice=true;1->showAddLoc=true;2->showAddJournal=true;else->galleryPicker.launch("image/*")}},
+                expanded=fabExpanded,
                 containerColor=when(tab){0->GOLD;1->TEAL;2->GOLD_MID;else->TEAL},contentColor=L0,
-                modifier=Modifier.navigationBarsPadding(),
+                modifier=Modifier.navigationBarsPadding()
+                    .shadow(14.dp, RoundedCornerShape(16.dp), ambientColor=GOLD, spotColor=L0),
                 icon={Icon(when(tab){0->Icons.Default.PersonAdd;1->Icons.Default.AddLocation;2->Icons.Default.HistoryEdu;else->Icons.Default.AddPhotoAlternate},null,Modifier.size(20.dp))},
-                text={Text(when(tab){0->"Personnage";1->"Lieu";2->"Entrée";else->"Photo"},style=Typo.labelLarge.copy(fontFamily=CinzelFamily,fontSize=13.sp))},
-                shape=RoundedCornerShape(16.dp))
+                text={Text(when(tab){0->"Personnage";1->"Lieu";2->"Entrée";else->"Photo"},style=Typo.labelLarge.copy(fontFamily=CinzelFamily,fontSize=13.sp))})
         }) { pads ->
         Column(Modifier.fillMaxSize()) {
             // Header
@@ -1649,12 +1685,12 @@ fun CampaignDetailScreen(
                         emptyHint=if(activeFilter!=null)"Aucun NPC avec ce label" else "Appuie sur + pour ajouter",
                         emptyIcon=Icons.Outlined.Person, accent=GOLD,
                         getKey={it.id},getName={it.name},getSub={it.role},
-                        getPreview={it.shortCard},getTags={it.tags},
+                        getPreview={prettyHeader(it.shortCard)},getTags={it.tags},
                         getLabels={ids->c.labels.filter{l->l.id in ids}},
                         getLabelIds={it.labelIds},
                         getPhoto={it.photoUris.firstOrNull()}, getFocal={it.heroFocal},
                         onOpen={onOpenNpc(it)},onDel={onDelNpc(it)},
-                        bottomPad=pads.calculateBottomPadding())
+                        bottomPad=pads.calculateBottomPadding(), listState=listStates[0])
                     1 -> EntityList(filteredLocs.sortedBy{it.name.lowercase()}, typeIcon=Icons.Default.Place,
                         emptyTitle=if(activeFilter!=null)"Aucun résultat" else "Aucun lieu",
                         emptyHint=if(activeFilter!=null)"Aucun lieu avec ce label" else "Appuie sur + pour ajouter",
@@ -1665,7 +1701,7 @@ fun CampaignDetailScreen(
                         getLabelIds={it.labelIds},
                         getPhoto={it.photoUris.firstOrNull()},
                         onOpen={onOpenLoc(it)},onDel={onDelLoc(it)},
-                        bottomPad=pads.calculateBottomPadding())
+                        bottomPad=pads.calculateBottomPadding(), listState=listStates[1])
                     2 -> JournalTab(c.journal,
                         onEdit={editJournal=it}, onDel=onDelJournal,
                         bottomPad=pads.calculateBottomPadding())
@@ -1685,7 +1721,8 @@ fun <T> EntityList(
     getPreview:(T)->String, getTags:(T)->String,
     getLabels:(List<String>)->List<CampaignLabel>, getLabelIds:(T)->List<String>,
     getPhoto:(T)->String?, onOpen:(T)->Unit, onDel:(T)->Unit, bottomPad: Dp,
-    typeIcon: ImageVector = Icons.Default.Person, getFocal:(T)->Float = { 0.5f }
+    typeIcon: ImageVector = Icons.Default.Person, getFocal:(T)->Float = { 0.5f },
+    listState: LazyListState = rememberLazyListState()
 ) {
     var delTarget by remember{mutableStateOf<T?>(null)}
     delTarget?.let{t-> ConfirmDelete("Supprimer ?","« ${getName(t)} » sera supprimé.",
@@ -1702,7 +1739,7 @@ fun <T> EntityList(
             }
         }
     } else {
-        LazyColumn(Modifier.fillMaxSize(),
+        LazyColumn(Modifier.fillMaxSize(), state=listState,
             contentPadding=PaddingValues(top=8.dp,bottom=bottomPad+104.dp),
             verticalArrangement=Arrangement.spacedBy(8.dp)){
             itemsIndexed(items, key={_,it->getKey(it)}){ index, item ->
@@ -2778,30 +2815,35 @@ private class Ember(
 fun EmberDust(modifier: Modifier = Modifier) {
     val embers = remember {
         val rnd = java.util.Random(42)
-        List(14) {
+        List(34) {
             Ember(
                 x = rnd.nextFloat(),
-                size = 1.2f + rnd.nextFloat() * 2.3f,
-                speed = 0.012f + rnd.nextFloat() * 0.022f,
+                size = 2.5f + rnd.nextFloat() * 4.5f,
+                speed = 0.10f + rnd.nextFloat() * 0.16f,
                 phase = rnd.nextFloat(),
-                drift = (rnd.nextFloat() - 0.5f) * 0.04f,
-                maxA = 0.05f + rnd.nextFloat() * 0.09f
+                drift = (rnd.nextFloat() - 0.5f) * 0.06f,
+                maxA = 0.30f + rnd.nextFloat() * 0.45f
             )
         }
     }
     val t = rememberInfiniteTransition(label="ember")
     val clock by t.animateFloat(0f, 1f,
-        infiniteRepeatable(tween(60000, easing=LinearEasing), RepeatMode.Restart), label="emberClock")
+        infiniteRepeatable(tween(28000, easing=LinearEasing), RepeatMode.Restart), label="emberClock")
+    // subtle twinkle so embers pulse as they rise
+    val tw by t.animateFloat(0f, 6.28f,
+        infiniteRepeatable(tween(3200, easing=LinearEasing), RepeatMode.Restart), label="twinkle")
     Canvas(modifier) {
         embers.forEach { e ->
-            // progress rises from bottom (1) to top (0), looping
-            val p = (e.phase + clock / (e.speed * 60f)) % 1f
-            val y = (1f - p) * size.height
+            val p = (e.phase + clock / e.speed) % 1f
+            val y = (1f - p) * size.height * 1.05f - size.height*0.02f
             val x = (e.x + e.drift * kotlin.math.sin(p * 6.28f)) * size.width
-            // fade in/out at the ends
-            val edge = kotlin.math.min(p, 1f - p) * 4f
-            val a = e.maxA * edge.coerceIn(0f, 1f)
-            if (a > 0.003f) {
+            val edge = (kotlin.math.min(p, 1f - p) * 3.5f).coerceIn(0f, 1f)
+            val twinkle = 0.75f + 0.25f * kotlin.math.sin(tw + e.phase * 6.28f)
+            val a = e.maxA * edge * twinkle
+            if (a > 0.004f) {
+                // soft outer glow
+                drawCircle(GOLD.copy(alpha = a * 0.35f), e.size * 2.6f, Offset(x, y))
+                // bright core
                 drawCircle(GOLD_HI.copy(alpha = a), e.size, Offset(x, y))
             }
         }
