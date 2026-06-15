@@ -226,9 +226,36 @@ data class Location(
     val name: String, val type: String = "", val description: String = "",
     val atmosphere: String = "", val notableFeatures: String = "",
     val linkedNpcs: String = "", val secrets: String = "", val tags: String = "",
+    val loc: Map<String,String> = emptyMap(),       // structured location-profile fields
     val labelIds: List<String> = emptyList(),
     val linkedNpcIds: List<String> = emptyList(),   // structured links → NPC fiches
-    val photoUris: List<String> = emptyList()
+    val photoUris: List<String> = emptyList(),
+    val heroFocal: Float = 0.5f
+)
+
+/** Location-profile field keys, in display order (mirrors the Airealm building template). */
+val LOC_KEYS = listOf(
+    "Access","Style","Facade","Entrance",
+    "Zone1","Zone2","Zone3","Flow",
+    "Lighting","Acoustics","SmellTemp","Vibe",
+    "Security","Services","Secrets"
+)
+val LOC_LABELS = mapOf(
+    "Access" to "Accès · Zone",
+    "Style" to "Style architectural",
+    "Facade" to "Façade · Signes distinctifs",
+    "Entrance" to "Approche · Entrée",
+    "Zone1" to "Zone 1",
+    "Zone2" to "Zone 2",
+    "Zone3" to "Zone 3",
+    "Flow" to "Circulation · Goulots",
+    "Lighting" to "Éclairage",
+    "Acoustics" to "Acoustique · Sons",
+    "SmellTemp" to "Odeur · Température",
+    "Vibe" to "Ambiance dynamique",
+    "Security" to "Sécurité",
+    "Services" to "Services · Loot",
+    "Secrets" to "Lore caché · Secrets"
 )
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -387,6 +414,10 @@ private fun JSONObject.toLoc(fb: String) = Location(
         buildList { for (i in 0 until a.length()) add(a.getString(i)) }
     },
     secrets = optString("secrets",""), tags = optString("tags",""),
+    loc = optJSONObject("loc")?.let { o ->
+        buildMap { o.keys().forEach { k -> put(k, o.getString(k)) } }
+    } ?: emptyMap(),
+    heroFocal = optDouble("heroFocal", 0.5).toFloat(),
     labelIds = (optJSONArray("labelIds") ?: JSONArray()).let { a ->
         buildList { for (i in 0 until a.length()) add(a.getString(i)) }
     },
@@ -434,6 +465,8 @@ private fun Location.toJson() = JSONObject().apply {
     put("notableFeatures",notableFeatures); put("linkedNpcs",linkedNpcs)
     put("linkedNpcIds", JSONArray().also { a -> linkedNpcIds.forEach { a.put(it) } })
     put("secrets",secrets); put("tags",tags)
+    put("loc", JSONObject().also { o -> loc.forEach { (k,v) -> o.put(k,v) } })
+    put("heroFocal", heroFocal.toDouble())
     put("labelIds",  JSONArray().also { a -> labelIds.forEach  { a.put(it) } })
     put("photoUris", JSONArray().also { a -> photoUris.forEach { a.put(it) } })
 }
@@ -580,6 +613,11 @@ fun CompanionApp() {
                         val x = npc.copy(campaignId = c.id)
                         persist(campaigns.map{if(it.id==c.id)it.copy(npcs=it.npcs+x)else it})
                         screen = Screen.NpcDetail(c.id, x.id)
+                    },
+                    onImportLoc     = { loc ->
+                        val x = loc.copy(campaignId = c.id)
+                        persist(campaigns.map{if(it.id==c.id)it.copy(locations=it.locations+x)else it})
+                        screen = Screen.LocDetail(c.id, x.id)
                     },
                     onAddGalleryPhoto = { uri -> addPhoto(uri){ path -> persist(campaigns.map{if(it.id==c.id)it.copy(gallery=it.gallery+GalleryPhoto(path=path))else it}) } },
                     onUpdateCaption  = { gp -> persist(campaigns.map{if(it.id==c.id)it.copy(gallery=it.gallery.map{g->if(g.id==gp.id)gp else g})else it}) },
@@ -1568,7 +1606,7 @@ fun CampaignDetailScreen(
     onAddNpc:(String)->Unit, onDelNpc:(Npc)->Unit,
     onAddLoc:(String)->Unit, onDelLoc:(Location)->Unit,
     onUpdateLabels:(List<CampaignLabel>)->Unit,
-    onImportNpc:(Npc)->Unit,
+    onImportNpc:(Npc)->Unit, onImportLoc:(Location)->Unit,
     onAddJournal:(JournalEntry)->Unit, onUpdateJournal:(JournalEntry)->Unit, onDelJournal:(JournalEntry)->Unit,
     onAddGalleryPhoto:(Uri)->Unit, onUpdateCaption:(GalleryPhoto)->Unit, onDelGalleryPhoto:(GalleryPhoto)->Unit
 ) {
@@ -1581,6 +1619,8 @@ fun CampaignDetailScreen(
     var showAddJournal by remember{mutableStateOf(false)}
     var showImport     by remember{mutableStateOf(false)}
     var showNpcChoice  by remember{mutableStateOf(false)}
+    var showLocChoice  by remember{mutableStateOf(false)}
+    var showImportLoc  by remember{mutableStateOf(false)}
     var editJournal    by remember{mutableStateOf<JournalEntry?>(null)}
     var showLabels   by remember{mutableStateOf(false)}
     var activeFilter by remember{mutableStateOf<String?>(null)}  // null = all
@@ -1593,6 +1633,11 @@ fun CampaignDetailScreen(
         onDismiss={showNpcChoice=false},
         onImport={showNpcChoice=false; showImport=true},
         onBlank={showNpcChoice=false; showAddNpc=true})
+    if(showLocChoice) LocChoiceSheet(
+        onDismiss={showLocChoice=false},
+        onImport={showLocChoice=false; showImportLoc=true},
+        onBlank={showLocChoice=false; showAddLoc=true})
+    if(showImportLoc) ImportLocSheet({showImportLoc=false}){onImportLoc(it)}
     editJournal?.let{ entry -> JournalSheet(entry,{editJournal=null}){onUpdateJournal(it)} }
     if(showLabels) LabelManagerDialog(c.labels,{showLabels=false},onUpdateLabels)
 
@@ -1603,7 +1648,7 @@ fun CampaignDetailScreen(
                 listStates[tab].firstVisibleItemIndex == 0 && listStates[tab].firstVisibleItemScrollOffset < 40
             } }
             ExtendedFloatingActionButton(
-                onClick={when(tab){0->showNpcChoice=true;1->showAddLoc=true;2->showAddJournal=true;else->galleryPicker.launch("image/*")}},
+                onClick={when(tab){0->showNpcChoice=true;1->showLocChoice=true;2->showAddJournal=true;else->galleryPicker.launch("image/*")}},
                 expanded=fabExpanded,
                 containerColor=when(tab){0->GOLD;1->TEAL;2->GOLD_MID;else->TEAL},contentColor=L0,
                 modifier=Modifier.navigationBarsPadding()
@@ -2034,6 +2079,45 @@ fun LocScreen(
                         e=e.copy(labelIds=if(id in e.labelIds)e.labelIds-id else e.labelIds+id)}
                 }
             }
+
+            // ── Structured location-profile fields (from the building template) ──
+            @Composable
+            fun lfield(key: String, multi: Boolean = true) {
+                LoreField(LOC_LABELS[key] ?: key, e.loc[key] ?: "", "—", multi=multi, accent=TEAL){ v ->
+                    e = e.copy(loc = e.loc.toMutableMap().apply {
+                        if (v.isBlank()) remove(key) else put(key, v) })
+                }
+            }
+            val hasProfile = e.loc.isNotEmpty()
+            if (hasProfile || e.loc.keys.any { it in LOC_KEYS }) {
+                LoreSection("Architecture",Icons.Default.Landscape,accent=TEAL,
+                    summary=e.loc["Style"]?.take(60) ?: "Façade, entrée, approche"){
+                    lfield("Access", multi=false)
+                    lfield("Style")
+                    lfield("Facade")
+                    lfield("Entrance")
+                }
+                LoreSection("Espaces & circulation",Icons.Default.Groups,accent=TEAL,
+                    summary=e.loc["Zone1"]?.take(60) ?: "Zones et flux internes"){
+                    lfield("Zone1")
+                    lfield("Zone2")
+                    lfield("Zone3")
+                    lfield("Flow")
+                }
+                LoreSection("Ambiance sensorielle",Icons.Default.Fingerprint,accent=TEAL,
+                    summary=e.loc["Vibe"]?.take(60) ?: "Lumière, sons, odeurs"){
+                    lfield("Lighting")
+                    lfield("Acoustics")
+                    lfield("SmellTemp")
+                    lfield("Vibe")
+                }
+                LoreSection("Mécaniques",Icons.Default.Lock,accent=TEAL,
+                    summary=e.loc["Security"]?.take(60) ?: "Sécurité, services"){
+                    lfield("Security")
+                    lfield("Services")
+                }
+            }
+
             LoreSection("Description",Icons.Default.Landscape,accent=TEAL,
                 summary=e.description.take(80).ifBlank{"Non renseignée"}){
                 LoreField("Description générale",e.description,"Ce qu'on voit en arrivant…",multi=true,accent=TEAL){e=e.copy(description=it)}
@@ -2331,6 +2415,66 @@ fun campaignFullExport(c: Campaign): String = buildString {
  *  - FACETS  : emoji stat line(s)
  * Anything unrecognised is preserved in the full card so no data is lost.
  */
+/**
+ * Parses an Airealm "LOCATION PROFILE" building template into a structured Location.
+ * Maps each template bullet to a LOC_KEYS field.
+ */
+fun parseLocationCard(name: String, raw: String): Location {
+    val lines = raw.lines().map { it.trim() }.filter { it.isNotBlank() }
+
+    // grab "Label: value" allowing a leading bullet/emoji and partial label match
+    fun grab(vararg keys: String): String {
+        for (l in lines) {
+            val clean = l.trimStart('•','·','-','*',' ','\t')
+            for (k in keys) {
+                val idx = clean.indexOf(k, ignoreCase = true)
+                if (idx in 0..3 && clean.contains(":")) {
+                    val after = clean.substringAfter(":").trim()
+                    if (after.isNotBlank()) return after
+                }
+            }
+        }
+        return ""
+    }
+
+    val locMap = linkedMapOf<String,String>()
+
+    // Header line: "Type: ... | Zone/District: ... | Access Level: ..."
+    val header = lines.firstOrNull { it.contains("Type:", true) && it.contains("|") } ?: ""
+    val hParts = header.split("|").map { it.trim() }.filter { it.isNotBlank() }
+    fun hseg(vararg ks: String) = hParts.firstOrNull { p -> ks.any { p.startsWith(it, true) } }
+        ?.substringAfter(":")?.trim() ?: ""
+    val type = hseg("Type")
+    val zone = hseg("Zone", "District")
+    val access = hseg("Access")
+    if (zone.isNotBlank() || access.isNotBlank())
+        locMap["Access"] = listOf(zone, access).filter { it.isNotBlank() }.joinToString(" · ")
+
+    // Each field via its template label(s)
+    fun put(key: String, vararg labels: String) { grab(*labels).ifBlank{null}?.let { locMap[key] = it } }
+    put("Style", "Architectural Style", "Style")
+    put("Facade", "Facade", "Distinguishing")
+    put("Entrance", "Approach", "Entrance")
+    put("Zone1", "Zone 1")
+    put("Zone2", "Zone 2")
+    put("Zone3", "Zone 3")
+    put("Flow", "Flow", "Chokepoint")
+    put("Lighting", "Lighting")
+    put("Acoustics", "Acoustics", "Soundscape")
+    put("SmellTemp", "Smell", "Temperature")
+    put("Vibe", "Dynamic Vibe", "Vibe")
+    put("Security", "Security", "Enforcement")
+    put("Services", "Available Services", "Services", "Loot")
+    put("Secrets", "Environmental Storytelling", "Hidden Lore")
+
+    return Location(
+        campaignId = "",
+        name = name.trim(),
+        type = type,
+        loc = locMap
+    )
+}
+
 fun parseAirealmCard(name: String, raw: String): Npc {
     val lines = raw.lines().map { it.trim() }.filter { it.isNotBlank() }
     fun grab(key: String): String = lines.firstOrNull {
@@ -2846,6 +2990,109 @@ fun EmberDust(modifier: Modifier = Modifier) {
                 // bright core
                 drawCircle(GOLD_HI.copy(alpha = a), e.size, Offset(x, y))
             }
+        }
+    }
+}
+
+
+// ─────────────────────────────────────────────────────────────────────────────
+// LOCATION import — choice sheet + paste-template sheet
+// ─────────────────────────────────────────────────────────────────────────────
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun LocChoiceSheet(onDismiss: ()->Unit, onImport: ()->Unit, onBlank: ()->Unit) {
+    ModalBottomSheet(onDismissRequest=onDismiss,
+        sheetState=rememberModalBottomSheetState(skipPartiallyExpanded=true),
+        containerColor=L3,
+        dragHandle={Box(Modifier.padding(vertical=10.dp).width(32.dp).height(3.dp)
+            .clip(RoundedCornerShape(2.dp)).background(L6))}) {
+        Column(Modifier.fillMaxWidth().padding(horizontal=18.dp).navigationBarsPadding().padding(bottom=12.dp)) {
+            Text("Nouveau lieu", style=Typo.headlineMedium.copy(color=T1))
+            Spacer(Modifier.height(4.dp))
+            Text("Importe un profil de lieu Airealm pour remplir la fiche, ou pars d'une fiche vierge.",
+                style=Typo.bodySmall.copy(color=T3))
+            Spacer(Modifier.height(18.dp))
+            Row(Modifier.fillMaxWidth().clip(RoundedCornerShape(14.dp))
+                .background(TEAL.copy(alpha=0.14f))
+                .border(1.dp, TEAL.copy(alpha=0.4f), RoundedCornerShape(14.dp))
+                .pressable(onClickLabel="Importer un profil"){onImport()}
+                .padding(16.dp), verticalAlignment=Alignment.CenterVertically){
+                Box(Modifier.size(40.dp).clip(CircleShape).background(TEAL.copy(alpha=0.18f)),
+                    contentAlignment=Alignment.Center){
+                    Icon(Icons.Default.Download, null, Modifier.size(20.dp), tint=TEAL)
+                }
+                Spacer(Modifier.width(14.dp))
+                Column(Modifier.weight(1f)){
+                    Text("Importer un profil de lieu", style=Typo.titleMedium.copy(color=T1))
+                    Text("Colle le template, les champs se remplissent", style=Typo.bodySmall.copy(color=T3))
+                }
+                Icon(Icons.Default.ChevronRight, null, Modifier.size(20.dp), tint=TEAL.copy(alpha=0.6f))
+            }
+            Spacer(Modifier.height(10.dp))
+            Row(Modifier.fillMaxWidth().clip(RoundedCornerShape(14.dp))
+                .background(L4).border(1.dp, L5, RoundedCornerShape(14.dp))
+                .pressable(onClickLabel="Créer vierge"){onBlank()}
+                .padding(16.dp), verticalAlignment=Alignment.CenterVertically){
+                Box(Modifier.size(40.dp).clip(CircleShape).background(L5),
+                    contentAlignment=Alignment.Center){
+                    Icon(Icons.Default.AddLocation, null, Modifier.size(20.dp), tint=T2)
+                }
+                Spacer(Modifier.width(14.dp))
+                Column(Modifier.weight(1f)){
+                    Text("Créer une fiche vierge", style=Typo.titleMedium.copy(color=T1))
+                    Text("Tout remplir à la main", style=Typo.bodySmall.copy(color=T3))
+                }
+                Icon(Icons.Default.ChevronRight, null, Modifier.size(20.dp), tint=T4)
+            }
+            Spacer(Modifier.height(8.dp))
+        }
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun ImportLocSheet(onDismiss: ()->Unit, onImport: (Location)->Unit) {
+    var name by remember { mutableStateOf("") }
+    var raw  by remember { mutableStateOf("") }
+    ModalBottomSheet(onDismissRequest = onDismiss,
+        sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
+        containerColor = L3,
+        dragHandle = { Box(Modifier.padding(vertical=10.dp).width(32.dp).height(3.dp)
+            .clip(RoundedCornerShape(2.dp)).background(L6)) }) {
+        Column(Modifier.fillMaxWidth().padding(horizontal=22.dp)
+            .navigationBarsPadding().imePadding().verticalScroll(rememberScrollState())) {
+            Text("Importer un profil de lieu", style = Typo.headlineMedium.copy(color = T1))
+            Text("Colle un LOCATION PROFILE — les champs se remplissent automatiquement.",
+                style = Typo.bodySmall.copy(color = T3), modifier = Modifier.padding(top = 4.dp))
+            Spacer(Modifier.height(16.dp))
+            OutlinedTextField(value = name, onValueChange = { name = it },
+                placeholder = { Text("Nom du lieu…", color = T4,
+                    style = Typo.bodyMedium.copy(fontStyle = FontStyle.Italic)) },
+                modifier = Modifier.fillMaxWidth(), singleLine = true, shape = RoundedCornerShape(12.dp),
+                colors = OutlinedTextFieldDefaults.colors(focusedBorderColor=TEAL, unfocusedBorderColor=L6,
+                    focusedContainerColor=L4, unfocusedContainerColor=L4, cursorColor=TEAL),
+                textStyle = Typo.bodyLarge.copy(color = T1))
+            Spacer(Modifier.height(10.dp))
+            OutlinedTextField(value = raw, onValueChange = { raw = it },
+                placeholder = { Text("Type: … | Zone: … | Access: …\n• Architectural Style: …",
+                    color = T4, style = Typo.bodySmall.copy(fontStyle = FontStyle.Italic)) },
+                modifier = Modifier.fillMaxWidth().heightIn(min = 160.dp, max = 280.dp),
+                shape = RoundedCornerShape(12.dp),
+                colors = OutlinedTextFieldDefaults.colors(focusedBorderColor=TEAL, unfocusedBorderColor=L6,
+                    focusedContainerColor=L4, unfocusedContainerColor=L4, cursorColor=TEAL),
+                textStyle = Typo.bodySmall.copy(color = T1, fontFamily = FontFamily.Monospace))
+            Spacer(Modifier.height(14.dp))
+            Button(onClick = { onImport(parseLocationCard(name, raw)); onDismiss() },
+                enabled = name.isNotBlank() && raw.isNotBlank(),
+                modifier = Modifier.fillMaxWidth().height(50.dp), shape = RoundedCornerShape(12.dp),
+                colors = ButtonDefaults.buttonColors(containerColor = TEAL, contentColor = L0,
+                    disabledContainerColor = L4, disabledContentColor = T4)) {
+                Icon(Icons.Default.Download, null, Modifier.size(17.dp))
+                Spacer(Modifier.width(8.dp))
+                Text("Importer le lieu", style = Typo.labelLarge.copy(fontFamily = CinzelFamily, fontSize = 14.sp))
+            }
+            Spacer(Modifier.height(8.dp))
         }
     }
 }
