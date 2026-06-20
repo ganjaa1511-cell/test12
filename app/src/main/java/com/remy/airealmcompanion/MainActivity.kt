@@ -1957,6 +1957,7 @@ fun CampaignCard(c: Campaign, onOpen:()->Unit, onEdit:()->Unit, onDelete:()->Uni
     }
 }
 
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 fun CampaignEditDialog(c: Campaign, onDismiss:()->Unit, onSave:(Campaign)->Unit) {
     val ctx = LocalContext.current
