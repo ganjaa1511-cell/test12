@@ -51,10 +51,12 @@ import androidx.compose.ui.*
 import androidx.compose.ui.draw.*
 import androidx.compose.ui.geometry.*
 import androidx.compose.ui.graphics.*
+import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.drawscope.*
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.*
 import androidx.compose.ui.text.font.*
 import androidx.compose.ui.text.googlefonts.*
@@ -125,16 +127,27 @@ private val CRIM_LO = Color(0xFF2E1512)
 
 // Label palette — 8 distinct warm/cool colours that all work on the dark bg
 val LABEL_COLORS = listOf(
-    Color(0xFFCCA040), // Ambre
-    Color(0xFF3D8888), // Sarcelle
-    Color(0xFF7A5088), // Améthyste
-    Color(0xFF8B4040), // Cramoisi
-    Color(0xFF3A6A50), // Mousse
-    Color(0xFF6A5030), // Bronze
-    Color(0xFF405070), // Ardoise
-    Color(0xFF706040), // Sable
+    Color(0xFFD9A441), // Ambre
+    Color(0xFF3FA0A0), // Sarcelle
+    Color(0xFF9B5FB0), // Améthyste
+    Color(0xFFC0504D), // Cramoisi
+    Color(0xFF4E9E6E), // Mousse
+    Color(0xFF8A6A3A), // Bronze
+    Color(0xFF5575A0), // Ardoise
+    Color(0xFFB0926A), // Sable
+    Color(0xFFE08A4C), // Mandarine
+    Color(0xFFD96B8E), // Rose poudré
+    Color(0xFF6C8FE0), // Bleuet
+    Color(0xFF5FB89A), // Jade
+    Color(0xFFB5C24A), // Citron vert
+    Color(0xFFC85C5C), // Corail
+    Color(0xFF9080D0), // Lavande
+    Color(0xFF8FA0AE), // Acier
 )
-val LABEL_COLOR_NAMES = listOf("Ambre","Sarcelle","Améthyste","Cramoisi","Mousse","Bronze","Ardoise","Sable")
+val LABEL_COLOR_NAMES = listOf(
+    "Ambre","Sarcelle","Améthyste","Cramoisi","Mousse","Bronze","Ardoise","Sable",
+    "Mandarine","Rose poudré","Bleuet","Jade","Citron vert","Corail","Lavande","Acier"
+)
 
 private fun scheme() = darkColorScheme(
     primary = GOLD, onPrimary = L0, primaryContainer = GOLD_DIM,
@@ -185,8 +198,46 @@ data class Campaign(
     val gallery: List<GalleryPhoto> = emptyList(),
     val npcs: List<Npc> = emptyList(),
     val locations: List<Location> = emptyList(),
-    val journal: List<JournalEntry> = emptyList()
+    val journal: List<JournalEntry> = emptyList(),
+    val theme: String = "default",
+    val gauges: List<Gauge> = emptyList(),  // custom per-campaign stat gauges
+    val accentColor: Int = -1               // -1 = terracotta défaut, sinon index dans LABEL_COLORS
 )
+
+/** Resolve a campaign's signature accent colour (falls back to the default copper/terracotta). */
+fun Campaign.accent(): Color =
+    if (accentColor in LABEL_COLORS.indices) LABEL_COLORS[accentColor] else GOLD
+
+/** Accent colour of the active campaign context (defaults to GOLD when outside a campaign). */
+val LocalAccent = compositionLocalOf { GOLD }
+
+/** A custom gauge defined at campaign level. Numeric (0..100 bar) or leveled (text scale). */
+data class Gauge(
+    val id: String = UUID.randomUUID().toString(),
+    val name: String,
+    val colorIndex: Int = 0,        // index into LABEL_COLORS
+    val numeric: Boolean = false    // true = 0..100 number, false = text level
+)
+
+/** Ordered text levels for leveled gauges → 0..1 intensity. */
+val GAUGE_LEVELS = listOf("None","Low","Moderate","High","Max")
+fun gaugeLevelIntensity(value: String): Float {
+    val idx = GAUGE_LEVELS.indexOfFirst { it.equals(value, true) }
+    return if (idx >= 0) idx / (GAUGE_LEVELS.size - 1f) else 0.4f
+}
+
+/** Ambient theme per campaign type — tints the background glow + ember colour. */
+enum class CodexTheme(val id: String, val label: String, val glow: Color, val ember: Color) {
+    DEFAULT("default", "Codex (cuivre)", Color(0xFF3A2418), Color(0xFFE89B6C)),
+    SLICE   ("slice",   "Slice of Life",  Color(0xFF2A2418), Color(0xFFE8C76C)),
+    FANTASY ("fantasy", "Fantasy",        Color(0xFF2E2410), Color(0xFFE8B84E)),
+    HORROR  ("horror",  "Horreur",        Color(0xFF2A0E0E), Color(0xFFB04A3A)),
+    CYBER   ("cyber",   "Cyberpunk",      Color(0xFF101A2E), Color(0xFF5B9AD1)),
+    ROMANCE ("romance", "Romance",        Color(0xFF2E1422), Color(0xFFE87CA8));
+    companion object {
+        fun from(id: String) = entries.firstOrNull { it.id == id } ?: DEFAULT
+    }
+}
 
 data class GalleryPhoto(
     val id: String = UUID.randomUUID().toString(),
@@ -202,15 +253,37 @@ data class Npc(
     val dna: Map<String,String> = emptyMap(),     // structured Airealm fields, one line each
     val labelIds: List<String> = emptyList(),
     val photoUris: List<String> = emptyList(),
-    val heroFocal: Float = 0.5f                   // vertical focal point of hero photo (0=haut, 1=bas)
+    val heroFocal: Float = 0.5f,                  // vertical focal point of hero photo (0=haut, 1=bas)
+    val gaugeValues: Map<String,String> = emptyMap(),  // gaugeId → value (text level or number)
+    val sections: Map<String,String> = emptyMap(),     // free-form parsed sections (title → content), any format
+    val pinned: Boolean = false,                       // épinglé en haut de liste
+    val collapsedSections: Set<String> = emptySet()    // titres des sections repliées (mémorisé par fiche)
 )
 
 /** Canonical Airealm DNA / INERTIA field keys, in display order. */
 val DNA_KEYS = listOf(
+    "Gender",
     "Looks","Style/Persona","Voice/Humor","Lifestyle/Vices",
     "Insecurity/Drive","Priorities","Boundary","Clique","Texts"
 )
 val INERTIA_KEYS = listOf("Lens","Vibe","Anchors")
+
+/** Accepted input labels per canonical field. Parser tries each alias; storage stays canonical. */
+val FIELD_ALIASES: Map<String, List<String>> = mapOf(
+    "Lives"            to listOf("Lives in","Lives","Housing","Residence","Home"),
+    "Looks"            to listOf("Looks","Appearance","Physical"),
+    "Style/Persona"    to listOf("Style/Persona","Persona","Fashion","Style"),
+    "Voice/Humor"      to listOf("Voice/Humor","Voice","Humor","Speech"),
+    "Lifestyle/Vices"  to listOf("Lifestyle/Vices","Lifestyle","Vices","Habits"),
+    "Insecurity/Drive" to listOf("Insecurity/Drive","Insecurity","Motivation","Drive","Fear"),
+    "Priorities"       to listOf("Priorities","Goals","Priority"),
+    "Boundary"         to listOf("Boundaries","Boundary","Limits"),
+    "Clique"           to listOf("Clique","Social Circle","Faction","Group"),
+    "Texts"            to listOf("Texting/SMS","Texting Style","Texting","Messages","Texts","SMS"),
+    "Lens"             to listOf("Lens","Perception","View"),
+    "Vibe"             to listOf("Vibe","Mood","Energy"),
+    "Anchors"          to listOf("Anchors","Anchor")
+)
 /** Friendly French labels for the field keys. */
 val FIELD_LABELS = mapOf(
     "Looks" to "Apparence", "Style/Persona" to "Style · Persona",
@@ -218,7 +291,8 @@ val FIELD_LABELS = mapOf(
     "Insecurity/Drive" to "Insécurité · Moteur", "Priorities" to "Priorités",
     "Boundary" to "Limites", "Clique" to "Cercle social", "Texts" to "Messages / SMS",
     "Lens" to "Regard porté", "Vibe" to "Ambiance", "Anchors" to "Ancrages",
-    "Facets" to "Facettes", "Lives" to "Logement"
+    "Facets" to "Facettes", "Lives" to "Logement",
+    "Gender" to "Sexe · Pronoms"
 )
 
 data class Location(
@@ -299,21 +373,53 @@ private const val KEY   = "campaigns_v4"   // bumped — schema has labels now
 
 class LocalStore(ctx: Context) {
     private val p = ctx.applicationContext.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+    private val KEY_BACKUP = "campaigns_backup"
 
-    fun load(): List<Campaign> = p.getString(KEY, null)?.let { raw ->
-        runCatching {
+    /** True when the stored data was present but failed to parse (corruption) — UI can warn. */
+    var lastLoadCorrupted: Boolean = false
+        private set
+
+    fun load(): List<Campaign> {
+        val raw = p.getString(KEY, null)
+        if (raw.isNullOrBlank()) { lastLoadCorrupted = false; return starter() }  // genuinely empty → starter
+        val parsed = runCatching {
             val a = JSONArray(raw)
             buildList { for (i in 0 until a.length()) add(a.getJSONObject(i).toCampaign()) }
         }.getOrNull()
-    } ?: starter()
+        if (parsed != null) {
+            lastLoadCorrupted = false
+            // Keep a rolling backup of the last good state (for manual recovery)
+            runCatching { p.edit().putString(KEY_BACKUP, raw).apply() }
+            return parsed
+        }
+        // Corruption: DON'T fall back to starter (that would let a save overwrite good data).
+        // Try the backup first; if it also fails, surface an empty-but-flagged state.
+        lastLoadCorrupted = true
+        val backup = p.getString(KEY_BACKUP, null)
+        val fromBackup = backup?.let { b -> runCatching {
+            val a = JSONArray(b); buildList { for (i in 0 until a.length()) add(a.getJSONObject(i).toCampaign()) }
+        }.getOrNull() }
+        return fromBackup ?: starter()
+    }
 
     suspend fun save(list: List<Campaign>) = withContext(Dispatchers.IO) {
-        p.edit().putString(KEY, JSONArray().also { a -> list.forEach { a.put(it.toJson()) } }.toString()).commit()
+        val json = JSONArray().also { a -> list.forEach { a.put(it.toJson()) } }.toString()
+        // Before overwriting, copy the current good value to backup
+        runCatching { p.getString(KEY, null)?.let { cur -> p.edit().putString(KEY_BACKUP, cur).apply() } }
+        p.edit().putString(KEY, json).commit()
     }
 
     var lastOpenedId: String?
         get() = p.getString("lastOpened", null)
         set(v) { p.edit().putString("lastOpened", v).apply() }
+
+    var textScale: Float
+        get() = p.getFloat("textScale", 1f)
+        set(v) { p.edit().putFloat("textScale", v).apply() }
+
+    var compactCards: Boolean
+        get() = p.getBoolean("compactCards", false)
+        set(v) { p.edit().putBoolean("compactCards", v).apply() }
 
     fun toJson(list: List<Campaign>) = JSONArray().also { a -> list.forEach { a.put(it.toJson()) } }.toString(2)
     fun fromJson(s: String) = runCatching {
@@ -351,6 +457,11 @@ private fun JSONObject.toCampaign(): Campaign {
     val labArr = optJSONArray("labels") ?: JSONArray()
     return Campaign(
         id = id, name = optString("name",""), description = optString("description",""),
+        theme = optString("theme","default"),
+        accentColor = optInt("accentColor", -1),
+        gauges = (optJSONArray("gauges") ?: JSONArray()).let { a ->
+            buildList { for (i in 0 until a.length()) add(a.getJSONObject(i).toGauge()) }
+        },
         photoUri = optString("photoUri","").ifBlank { null },
         labels = buildList { for (i in 0 until labArr.length()) add(labArr.getJSONObject(i).toLabel()) },
         npcs = (optJSONArray("npcs") ?: JSONArray()).let { a ->
@@ -393,8 +504,21 @@ private fun JSONObject.toNpc(fb: String) = Npc(
     shortCard = optString("shortCard",""), fullCard = optString("fullCard",""),
     relationships = optString("relationships",""), secrets = optString("secrets",""),
     sceneHistory = optString("sceneHistory",""), tags = optString("tags",""),
+    pinned = optBoolean("pinned", false),
+    collapsedSections = (optJSONArray("collapsedSections") ?: JSONArray()).let { a ->
+        buildSet { for (i in 0 until a.length()) add(a.getString(i)) }
+    },
     dna = (optJSONObject("dna") ?: JSONObject()).let { o ->
         buildMap { o.keys().forEach { k -> put(k, o.optString(k,"")) } }
+    },
+    gaugeValues = (optJSONObject("gaugeValues") ?: JSONObject()).let { o ->
+        buildMap { o.keys().forEach { k -> put(k, o.optString(k,"")) } }
+    },
+    sections = (optJSONArray("sections") ?: JSONArray()).let { a ->
+        // stored as ordered array of {t,c} to preserve order
+        linkedMapOf<String,String>().apply {
+            for (i in 0 until a.length()) { val o=a.getJSONObject(i); put(o.optString("t",""), o.optString("c","")) }
+        }
     },
     labelIds = (optJSONArray("labelIds") ?: JSONArray()).let { a ->
         buildList { for (i in 0 until a.length()) add(a.getString(i)) }
@@ -426,14 +550,26 @@ private fun JSONObject.toLoc(fb: String) = Location(
     }
 )
 
+private fun Gauge.toJson() = JSONObject().apply {
+    put("id",id); put("name",name); put("colorIndex",colorIndex); put("numeric",numeric)
+}
+private fun JSONObject.toGauge() = Gauge(
+    id = optString("id").ifBlank { UUID.randomUUID().toString() },
+    name = optString("name",""),
+    colorIndex = optInt("colorIndex",0),
+    numeric = optBoolean("numeric",false)
+)
+
 private fun Campaign.toJson() = JSONObject().apply {
-    put("id",id); put("name",name); put("description",description)
+    put("id",id); put("name",name); put("description",description); put("theme",theme)
+    put("accentColor", accentColor)
     photoUri?.let { put("photoUri", it) }
     put("labels", JSONArray().also { a -> labels.forEach { a.put(it.toJson()) } })
     put("npcs",   JSONArray().also { a -> npcs.forEach     { a.put(it.toJson()) } })
     put("locations", JSONArray().also { a -> locations.forEach { a.put(it.toJson()) } })
     put("journal", JSONArray().also { a -> journal.forEach { a.put(it.toJson()) } })
     put("gallery", JSONArray().also { a -> gallery.forEach { a.put(it.toJson()) } })
+    put("gauges", JSONArray().also { a -> gauges.forEach { a.put(it.toJson()) } })
 }
 
 private fun GalleryPhoto.toJson() = JSONObject().apply {
@@ -453,8 +589,11 @@ private fun Npc.toJson() = JSONObject().apply {
     put("major",major); put("heroFocal", heroFocal.toDouble())
     put("shortCard",shortCard); put("fullCard",fullCard)
     put("relationships",relationships); put("secrets",secrets)
-    put("sceneHistory",sceneHistory); put("tags",tags)
+    put("sceneHistory",sceneHistory); put("tags",tags); put("pinned",pinned)
+    put("collapsedSections", JSONArray().also { a -> collapsedSections.forEach { a.put(it) } })
     put("dna", JSONObject().also { o -> dna.forEach { (k,v) -> o.put(k,v) } })
+    put("gaugeValues", JSONObject().also { o -> gaugeValues.forEach { (k,v) -> o.put(k,v) } })
+    put("sections", JSONArray().also { a -> sections.forEach { (t,c) -> a.put(JSONObject().put("t",t).put("c",c)) } })
     put("labelIds",  JSONArray().also { a -> labelIds.forEach  { a.put(it) } })
     put("photoUris", JSONArray().also { a -> photoUris.forEach { a.put(it) } })
 }
@@ -485,11 +624,20 @@ class MainActivity : ComponentActivity() {
             isAppearanceLightNavigationBars = false
         }
         setContent {
+            LaunchedEffect(Unit) {
+                val s = LocalStore(this@MainActivity)
+                TextPref.scale = s.textScale
+                CompactMode.on = s.compactCards
+            }
+            val baseDensity = LocalDensity.current
+            val scaledDensity = Density(baseDensity.density, baseDensity.fontScale * TextPref.scale)
+            CompositionLocalProvider(LocalDensity provides scaledDensity) {
             MaterialTheme(colorScheme = scheme(), typography = Typo) {
+                val themeGlow by animateColorAsState(CurrentTheme.theme.glow, tween(800), label="themeGlow")
                 Box(Modifier.fillMaxSize().background(L1).drawBehind {
-                    // Warm copper halo behind the header — richer "codex" matter
+                    // Ambient halo — tinted by the campaign theme
                     drawRect(Brush.radialGradient(
-                        listOf(Color(0xFF3A2418).copy(alpha=0.55f), Color(0xFF1A140A).copy(alpha=0.3f), Color.Transparent),
+                        listOf(themeGlow.copy(alpha=0.6f), themeGlow.copy(alpha=0.28f), Color.Transparent),
                         center = Offset(size.width*0.5f, size.height*0.08f),
                         radius = size.maxDimension * 0.5f))
                     // Vignette — corners sink into the void
@@ -514,6 +662,7 @@ class MainActivity : ComponentActivity() {
                     NoticeHost(Modifier.align(Alignment.BottomCenter))
                 }
             }
+            }
         }
     }
 }
@@ -527,6 +676,7 @@ sealed class Screen {
     data class Campaign(val id: String) : Screen()
     data class NpcDetail(val campaignId: String, val npcId: String) : Screen()
     data class LocDetail(val campaignId: String, val locId: String) : Screen()
+    data class Relations(val campaignId: String) : Screen()
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -541,6 +691,11 @@ fun CompanionApp() {
     var campaigns by remember { mutableStateOf(store.load()) }
     var screen    by remember { mutableStateOf<Screen>(Screen.Campaigns) }
     var lastOpenedId by remember { mutableStateOf(store.lastOpenedId) }
+    // If stored data couldn't be parsed, warn instead of silently losing it
+    LaunchedEffect(Unit) {
+        if (store.lastLoadCorrupted)
+            Notice.show("Données illisibles au démarrage — une sauvegarde de secours a été utilisée.")
+    }
     fun persist(next: List<Campaign>) { campaigns = next; scope.launch { store.save(next) } }
     fun openCampaign(id: String) { store.lastOpenedId = id; lastOpenedId = id; screen = Screen.Campaign(id) }
 
@@ -549,6 +704,7 @@ fun CompanionApp() {
         screen = when (val s = screen) {
             is Screen.NpcDetail -> Screen.Campaign(s.campaignId)
             is Screen.LocDetail -> Screen.Campaign(s.campaignId)
+            is Screen.Relations -> Screen.Campaign(s.campaignId)
             else -> Screen.Campaigns
         }
     }
@@ -580,6 +736,26 @@ fun CompanionApp() {
         }
     }
 
+    // Ambient theme follows the open campaign (and its sub-screens)
+    val activeCampaignId = when (val s = screen) {
+        is Screen.Campaign  -> s.id
+        is Screen.NpcDetail -> s.campaignId
+        is Screen.LocDetail -> s.campaignId
+        is Screen.Relations -> s.campaignId
+        else -> null
+    }
+    LaunchedEffect(activeCampaignId, campaigns) {
+        CurrentTheme.theme = activeCampaignId
+            ?.let { id -> campaigns.firstOrNull { it.id == id } }
+            ?.let { CodexTheme.from(it.theme) }
+            ?: CodexTheme.DEFAULT
+    }
+    // Signature accent of the active campaign (animated transition between campaigns)
+    val targetAccent = activeCampaignId
+        ?.let { id -> campaigns.firstOrNull { it.id == id } }?.accent() ?: GOLD
+    val activeAccent by animateColorAsState(targetAccent, tween(500), label="accent")
+
+    CompositionLocalProvider(LocalAccent provides activeAccent) {
     AnimatedContent(targetState = screen, transitionSpec = {
         // Social-premium feel: content fades + gently scales up into place
         (fadeIn(tween(260)) + scaleIn(tween(300, easing = EaseOutCubic), initialScale = 0.97f)
@@ -602,16 +778,43 @@ fun CompanionApp() {
                 val c = campaigns.firstOrNull{it.id==s.id} ?: run{screen=Screen.Campaigns;return@AnimatedContent}
                 CampaignDetailScreen(c,
                     onBack       = { screen = Screen.Campaigns },
+                    onOpenRelations = { screen = Screen.Relations(c.id) },
                     onOpenNpc    = { screen = Screen.NpcDetail(c.id, it.id) },
                     onOpenLoc    = { screen = Screen.LocDetail(c.id, it.id) },
                     onAddNpc     = { n -> val x=Npc(campaignId=c.id,name=n.ifBlank{"Nouveau NPC"}); persist(campaigns.map{if(it.id==c.id)it.copy(npcs=it.npcs+x)else it}) },
-                    onDelNpc     = { npc -> npc.photoUris.forEach{PhotoStore.delete(it)}; persist(campaigns.map{if(it.id==c.id)it.copy(npcs=it.npcs.filter{n->n.id!=npc.id})else it}) },
+                    onDelNpc     = { npc ->
+                        persist(campaigns.map{if(it.id==c.id)it.copy(npcs=it.npcs.filter{n->n.id!=npc.id})else it})
+                        Notice.showWithAction("« ${npc.name} » supprimé", "Annuler") {
+                            persist(campaigns.map{if(it.id==c.id)it.copy(npcs=it.npcs+npc)else it})
+                        }
+                    },
+                    onTogglePinNpc = { npc ->
+                        persist(campaigns.map{ if(it.id==c.id) it.copy(npcs=it.npcs.map{ x ->
+                            if(x.id==npc.id) x.copy(pinned=!x.pinned) else x }) else it })
+                    },
                     onAddLoc     = { n -> val x=Location(campaignId=c.id,name=n.ifBlank{"Nouveau lieu"}); persist(campaigns.map{if(it.id==c.id)it.copy(locations=it.locations+x)else it}) },
-                    onDelLoc     = { loc -> loc.photoUris.forEach{PhotoStore.delete(it)}; persist(campaigns.map{if(it.id==c.id)it.copy(locations=it.locations.filter{l->l.id!=loc.id})else it}) },
+                    onDelLoc     = { loc ->
+                        persist(campaigns.map{if(it.id==c.id)it.copy(locations=it.locations.filter{l->l.id!=loc.id})else it})
+                        Notice.showWithAction("« ${loc.name} » supprimé", "Annuler") {
+                            persist(campaigns.map{if(it.id==c.id)it.copy(locations=it.locations+loc)else it})
+                        }
+                    },
                     onUpdateLabels = { labels -> persist(campaigns.map{if(it.id==c.id)it.copy(labels=labels)else it}) },
                     onImportNpc     = { npc ->
-                        val x = npc.copy(campaignId = c.id)
-                        persist(campaigns.map{if(it.id==c.id)it.copy(npcs=it.npcs+x)else it})
+                        // Auto-gauges: keys like "auto:Love" → ensure a campaign gauge exists, remap to its id
+                        val autoEntries = npc.gaugeValues.filterKeys { it.startsWith("auto:") }
+                        var newGauges = c.gauges
+                        val remapped = npc.gaugeValues.toMutableMap()
+                        autoEntries.forEach { (k, v) ->
+                            val gname = k.removePrefix("auto:")
+                            val existing = newGauges.firstOrNull { it.name.equals(gname, true) }
+                            val gauge = existing ?: Gauge(name=gname, numeric=true,
+                                colorIndex=(newGauges.size) % LABEL_COLORS.size).also { newGauges = newGauges + it }
+                            remapped.remove(k)
+                            remapped[gauge.id] = v
+                        }
+                        val x = npc.copy(campaignId = c.id, gaugeValues = remapped)
+                        persist(campaigns.map{if(it.id==c.id)it.copy(npcs=it.npcs+x, gauges=newGauges)else it})
                         screen = Screen.NpcDetail(c.id, x.id)
                     },
                     onImportLoc     = { loc ->
@@ -632,12 +835,19 @@ fun CompanionApp() {
                 val npc = c.npcs.firstOrNull{it.id==s.npcId} ?: run{screen=Screen.Campaign(s.campaignId);return@AnimatedContent}
                 NpcScreen(npc, campaignLabels=c.labels,
                     campaignLocations=c.locations,
+                    campaignGauges=c.gauges,
                     onOpenLoc = { loc -> screen = Screen.LocDetail(c.id, loc.id) },
                     onBack    = { screen = Screen.Campaign(s.campaignId) },
                     onSave    = { e -> persist(campaigns.map{cc->if(cc.id==e.campaignId)cc.copy(npcs=cc.npcs.map{if(it.id==e.id)e else it})else cc}); toast(ctx,"Sauvegardé") },
                     onAddPhoto = { uri -> addPhoto(uri) { p -> val u=npc.copy(photoUris=npc.photoUris+p); persist(campaigns.map{cc->if(cc.id==u.campaignId)cc.copy(npcs=cc.npcs.map{if(it.id==u.id)u else it})else cc}) } },
                     onDelPhoto = { path -> PhotoStore.delete(path); val u=npc.copy(photoUris=npc.photoUris.filter{it!=path}); persist(campaigns.map{cc->if(cc.id==u.campaignId)cc.copy(npcs=cc.npcs.map{if(it.id==u.id)u else it})else cc}) }
                 )
+            }
+            is Screen.Relations -> {
+                val c = campaigns.firstOrNull{it.id==s.campaignId} ?: run{screen=Screen.Campaigns;return@AnimatedContent}
+                RelationsScreen(c,
+                    onBack={screen=Screen.Campaign(s.campaignId)},
+                    onOpenNpc={npc->screen=Screen.NpcDetail(c.id,npc.id)})
             }
             is Screen.LocDetail -> {
                 val c   = campaigns.firstOrNull{it.id==s.campaignId} ?: run{screen=Screen.Campaigns;return@AnimatedContent}
@@ -653,17 +863,40 @@ fun CompanionApp() {
             }
         }
     }
+    }
 }
 
 /** In-app themed notice — replaces system toasts for an immersive codex feel. */
-object Notice { var current by mutableStateOf<String?>(null) }
+/** The ambient theme currently displayed (driven by the open campaign). */
+object CurrentTheme { var theme by mutableStateOf(CodexTheme.DEFAULT) }
+
+/** User text-size preference: 0.9 = compact, 1.0 = normal, 1.15 = grand. */
+object TextPref { var scale by mutableStateOf(1f) }
+
+/** Compact list cards (dense rows) vs rich banner cards. */
+object CompactMode { var on by mutableStateOf(false) }
+
+/** When true, LoreFields render as clean read-only text (mode lecture). */
+val LocalReadMode = compositionLocalOf { false }
+
+object Notice {
+    var current by mutableStateOf<String?>(null)
+    var actionLabel by mutableStateOf<String?>(null)
+    var action: (() -> Unit)? = null
+    fun show(msg: String) { current = msg; actionLabel = null; action = null }
+    fun showWithAction(msg: String, label: String, act: () -> Unit) {
+        current = msg; actionLabel = label; action = act
+    }
+}
 @Suppress("UNUSED_PARAMETER")
-private fun toast(ctx: Context, msg: String) { Notice.current = msg }
+private fun toast(ctx: Context, msg: String) { Notice.show(msg) }
 
 @Composable
 fun NoticeHost(modifier: Modifier = Modifier) {
     val msg = Notice.current
-    LaunchedEffect(msg) { if (msg != null) { delay(2200); Notice.current = null } }
+    val actionLabel = Notice.actionLabel
+    LaunchedEffect(msg) { if (msg != null) { delay(if (Notice.actionLabel != null) 4500 else 2200)
+        Notice.current = null; Notice.actionLabel = null; Notice.action = null } }
     AnimatedVisibility(
         visible = msg != null,
         modifier = modifier,
@@ -683,7 +916,16 @@ fun NoticeHost(modifier: Modifier = Modifier) {
             horizontalArrangement = Arrangement.spacedBy(10.dp)
         ) {
             Icon(Icons.Default.Check, null, Modifier.size(15.dp), tint = GOLD_HI)
-            Text(shown, style = Typo.bodyMedium.copy(color = T1))
+            Text(shown, style = Typo.bodyMedium.copy(color = T1), modifier = Modifier.weight(1f, fill = false))
+            if (actionLabel != null) {
+                Box(Modifier.padding(start = 4.dp).clip(RoundedCornerShape(8.dp))
+                    .background(GOLD.copy(alpha = 0.18f))
+                    .clickable { Notice.action?.invoke(); Notice.current = null
+                        Notice.actionLabel = null; Notice.action = null }
+                    .padding(horizontal = 12.dp, vertical = 6.dp)) {
+                    Text(actionLabel, style = Typo.labelMedium.copy(color = GOLD_HI))
+                }
+            }
         }
     }
 }
@@ -707,6 +949,19 @@ private val SEAL_HUES = listOf(
     Color(0xFF566270), // slate
 )
 /** Turns a raw Airealm header "| 18yo | Freshman | Major: X |" into clean "18yo · Freshman · X". */
+/** Turn ALL-CAPS or messy section titles into clean Title Case ("RACE CLASS ROLE" → "Race Class Role"). */
+fun prettyTitle(raw: String): String {
+    val t = raw.trim()
+    // If it's mixed-case already (not all caps), leave it as-is.
+    val letters = t.filter { it.isLetter() }
+    if (letters.isNotEmpty() && letters != letters.uppercase()) return t
+    return t.lowercase().split(" ").joinToString(" ") { w ->
+        if (w.isEmpty()) w
+        else if (w == "&") w
+        else w.replaceFirstChar { it.uppercase() }
+    }
+}
+
 fun prettyHeader(raw: String): String =
     raw.split("|").map { it.trim() }
         .filter { it.isNotBlank() }
@@ -755,6 +1010,16 @@ fun EngravedMonogram(
  * A floating surface: deep soft shadow tinted by [glow], a glassy gradient fill,
  * and a hairline top highlight so the surface catches light. Creates real depth.
  */
+/** Entrance: content fades in and rises, with an optional delay (ms). Pairs with the hero grow. */
+@Composable
+fun rememberRiseIn(delayMs: Int = 90): Pair<Float, Float> {
+    var shown by remember { mutableStateOf(false) }
+    LaunchedEffect(Unit) { kotlinx.coroutines.delay(delayMs.toLong()); shown = true }
+    val a by animateFloatAsState(if (shown) 1f else 0f, tween(420, easing = EaseOutCubic), label="riseA")
+    val ty by animateFloatAsState(if (shown) 0f else 46f, tween(460, easing = EaseOutCubic), label="riseY")
+    return a to ty
+}
+
 fun Modifier.floatingSurface(
     shape: Shape,
     glow: Color = GOLD,
@@ -768,15 +1033,22 @@ fun Modifier.floatingSurface(
         fill.copy(alpha = 0.92f)
     )))
 
-@Composable
-fun Modifier.pressable(onClickLabel: String? = null, onClick: () -> Unit): Modifier {
+@OptIn(ExperimentalFoundationApi::class)
+fun Modifier.pressable(onClickLabel: String? = null, onLongClick: (()->Unit)? = null, onClick: () -> Unit): Modifier = composed {
     val interaction = remember { MutableInteractionSource() }
     val pressed by interaction.collectIsPressedAsState()
-    val scale by animateFloatAsState(if (pressed) 0.975f else 1f, tween(110), label = "press")
-    return this
+    val scale by animateFloatAsState(if (pressed) 0.97f else 1f, tween(110), label = "press")
+    val haptic = LocalHapticFeedback.current
+    this
         .graphicsLayer { scaleX = scale; scaleY = scale }
-        .clickable(interactionSource = interaction, indication = LocalIndication.current,
-            onClickLabel = onClickLabel, onClick = onClick)
+        .combinedClickable(interactionSource = interaction, indication = LocalIndication.current,
+            onClickLabel = onClickLabel,
+            onLongClick = if (onLongClick != null) {{
+                haptic.performHapticFeedback(HapticFeedbackType.LongPress); onLongClick()
+            }} else null,
+            onClick = {
+                haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove); onClick()
+            })
 }
 
 /** Codex flourish — ─── ◆ ─── */
@@ -897,6 +1169,7 @@ fun LabelChip(label: CampaignLabel, selected: Boolean = true, small: Boolean = f
 
 // ── Label manager dialog ──────────────────────────────────────────────────────
 
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 fun LabelManagerDialog(
     labels: List<CampaignLabel>,
@@ -935,9 +1208,9 @@ fun LabelManagerDialog(
                         focusedContainerColor=L4, unfocusedContainerColor=L4, cursorColor=GOLD),
                     textStyle = Typo.bodyMedium.copy(color=T1))
                 // Color picker row
-                LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    items(LABEL_COLORS.size) { i ->
-                        val c = LABEL_COLORS[i]
+                FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    LABEL_COLORS.forEachIndexed { i, c ->
                         Box(Modifier.size(28.dp).clip(CircleShape)
                             .background(c.copy(alpha=0.25f))
                             .border(2.dp, if (newColor==i) c else Color.Transparent, CircleShape)
@@ -1010,9 +1283,11 @@ fun LabelPicker(
 fun LoreSection(
     title: String, icon: ImageVector, accent: Color = GOLD,
     defaultExpanded: Boolean = true, summary: String = "",
+    expandedOverride: Boolean? = null, onExpandChange: ((Boolean)->Unit)? = null,
     content: @Composable ColumnScope.() -> Unit
 ) {
-    var expanded by remember { mutableStateOf(defaultExpanded) }
+    var expandedLocal by remember { mutableStateOf(defaultExpanded) }
+    val expanded = expandedOverride ?: expandedLocal
     val haptic = LocalHapticFeedback.current
     // Each section floats — soft shadow + glassy fill + accent hairline when open
     Column(Modifier.fillMaxWidth().padding(horizontal=14.dp, vertical=6.dp)
@@ -1021,7 +1296,9 @@ fun LoreSection(
         Row(Modifier.fillMaxWidth()
             .semantics { stateDescription = if (expanded) "Section dépliée" else "Section repliée" }
             .clickable(onClickLabel = if (expanded) "Replier" else "Déplier"){
-                haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove); expanded=!expanded
+                haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                val nv = !expanded
+                if (onExpandChange != null) onExpandChange(nv) else expandedLocal = nv
             }
             .padding(start=16.dp,end=14.dp,top=15.dp,bottom=if(expanded||summary.isBlank())11.dp else 13.dp),
             verticalAlignment=Alignment.CenterVertically) {
@@ -1054,6 +1331,17 @@ fun LoreField(
     label: String, value: String, placeholder: String = "",
     multi: Boolean = false, accent: Color = GOLD, onChange: (String) -> Unit
 ) {
+    val readMode = LocalReadMode.current
+    if (readMode) {
+        // In read mode, hide empty fields entirely for a clean "play" view
+        if (value.isBlank()) return
+        Column(Modifier.fillMaxWidth().padding(horizontal=20.dp, vertical=7.dp)) {
+            Text(label.uppercase(), style=Typo.labelSmall.copy(color=accent.copy(alpha=0.55f)))
+            Spacer(Modifier.height(4.dp))
+            Text(value, style=Typo.bodyLarge.copy(color=T1))
+        }
+        return
+    }
     Column(Modifier.fillMaxWidth().padding(horizontal=20.dp, vertical=7.dp)) {
         Text(label.uppercase(), style=Typo.labelSmall.copy(color=accent.copy(alpha=0.55f)))
         Spacer(Modifier.height(5.dp))
@@ -1077,18 +1365,101 @@ fun LoreField(
     }
 }
 
+/** A free-form section with an editable title, editable multiline content, and a delete button. */
+@Composable
+fun EditableSection(
+    title: String, content: String, readMode: Boolean,
+    canMoveUp: Boolean = false, canMoveDown: Boolean = false,
+    onMoveUp: ()->Unit = {}, onMoveDown: ()->Unit = {},
+    onContentChange: (String)->Unit, onTitleChange: (String)->Unit, onDelete: ()->Unit
+) {
+    if (readMode) {
+        if (content.isBlank()) return
+        Column(Modifier.fillMaxWidth().padding(horizontal=20.dp, vertical=7.dp)) {
+            Text(prettyTitle(title).uppercase(), style=Typo.labelSmall.copy(color=GOLD_MID.copy(alpha=0.65f)))
+            Spacer(Modifier.height(4.dp))
+            Text(content, style=Typo.bodyLarge.copy(color=T1))
+        }
+        return
+    }
+    var localTitle by remember(title) { mutableStateOf(title) }
+    Column(Modifier.fillMaxWidth().padding(horizontal=20.dp, vertical=7.dp)) {
+        // Title row: editable title + delete
+        Row(verticalAlignment=Alignment.CenterVertically, horizontalArrangement=Arrangement.spacedBy(6.dp)) {
+            BasicTextField(
+                value=localTitle, onValueChange={ localTitle=it },
+                textStyle=Typo.labelSmall.copy(color=GOLD_MID.copy(alpha=0.85f), letterSpacing=1.2.sp),
+                cursorBrush=SolidColor(GOLD_MID), singleLine=true,
+                modifier=Modifier.weight(1f).onFocusChanged { fs ->
+                    if (!fs.isFocused && localTitle.trim() != title) onTitleChange(localTitle.trim())
+                },
+                decorationBox={ inner ->
+                    Box {
+                        if (localTitle.isEmpty())
+                            Text("TITRE…", style=Typo.labelSmall.copy(color=T4, letterSpacing=1.2.sp))
+                        inner()
+                    }
+                }
+            )
+            // Reorder arrows
+            Box(Modifier.size(28.dp).clip(CircleShape)
+                .background(if(canMoveUp) L4 else L3)
+                .clickable(enabled=canMoveUp){ onMoveUp() }, contentAlignment=Alignment.Center){
+                Icon(Icons.Default.KeyboardArrowUp, "Monter", Modifier.size(17.dp),
+                    tint=if(canMoveUp) T2 else T4)
+            }
+            Box(Modifier.size(28.dp).clip(CircleShape)
+                .background(if(canMoveDown) L4 else L3)
+                .clickable(enabled=canMoveDown){ onMoveDown() }, contentAlignment=Alignment.Center){
+                Icon(Icons.Default.KeyboardArrowDown, "Descendre", Modifier.size(17.dp),
+                    tint=if(canMoveDown) T2 else T4)
+            }
+            Box(Modifier.size(28.dp).clip(CircleShape).background(CRIM_LO)
+                .clickable{ onDelete() }, contentAlignment=Alignment.Center){
+                Icon(Icons.Default.Close, "Supprimer la section", Modifier.size(15.dp), tint=CRIM)
+            }
+        }
+        Spacer(Modifier.height(5.dp))
+        BasicTextField(
+            value=content, onValueChange=onContentChange,
+            textStyle=Typo.bodyLarge.copy(color=T1, lineHeight=24.sp),
+            cursorBrush=SolidColor(GOLD_MID),
+            modifier=Modifier.fillMaxWidth(),
+            decorationBox={ inner ->
+                Box {
+                    if (content.isEmpty())
+                        Text("—", style=Typo.bodyLarge.copy(color=T4))
+                    inner()
+                }
+            }
+        )
+        Spacer(Modifier.height(6.dp))
+        HorizontalDivider(color=L4)
+    }
+}
+
 @Composable
 fun EntityHero(
     name: String, subtitle: String, firstPhoto: String?,
     accent: Color, onBack: ()->Unit, action: @Composable ()->Unit = {},
-    focal: Float = 0.5f, onFocalChange: ((Float)->Unit)? = null
+    focal: Float = 0.5f, onFocalChange: ((Float)->Unit)? = null,
+    onTapPhoto: (()->Unit)? = null
 ) {
     var heroShown by remember { mutableStateOf(false) }
     LaunchedEffect(Unit) { heroShown = true }
-    val heroAlpha by animateFloatAsState(if (heroShown) 1f else 0f, tween(500), label="heroFade")
+    val heroAlpha by animateFloatAsState(if (heroShown) 1f else 0f, tween(420), label="heroFade")
+    // "Grows into place": hero starts zoomed-in + lifted, then settles — reads as the card expanding
+    val heroScale by animateFloatAsState(if (heroShown) 1f else 1.12f,
+        spring(dampingRatio = 0.78f, stiffness = 220f), label="heroScale")
+    val heroLift by animateFloatAsState(if (heroShown) 0f else -34f,
+        tween(460, easing = EaseOutCubic), label="heroLift")
     var adjusting by remember { mutableStateOf(false) }
     var liveFocal by remember(focal) { mutableStateOf(focal) }
-    Box(Modifier.fillMaxWidth().height(310.dp).graphicsLayer{ alpha = heroAlpha }) {
+    Box(Modifier.fillMaxWidth().height(310.dp).graphicsLayer{
+        alpha = heroAlpha
+        scaleX = heroScale; scaleY = heroScale
+        translationY = heroLift
+    }) {
         if (firstPhoto != null) {
             val model = ImageRequest.Builder(LocalContext.current).data(File(firstPhoto)).crossfade(true).build()
             // Blurred ambiance behind
@@ -1114,7 +1485,11 @@ fun EntityHero(
                 contentDescription=null,
                 contentScale=ContentScale.Crop,
                 alignment=BiasAlignment(0f, liveFocal*2f - 1f),  // -1=top,0=center,1=bottom
-                modifier=Modifier.fillMaxSize().then(dragMod)
+                modifier=Modifier.fillMaxSize().then(dragMod).then(
+                    if (onTapPhoto != null && !adjusting)
+                        Modifier.clickable(onClickLabel="Ouvrir la photo en grand"){ onTapPhoto() }
+                    else Modifier
+                )
             )
             // Adjust controls
             if (onFocalChange != null) {
@@ -1217,6 +1592,10 @@ fun SaveBar(label: String, accent: Color = GOLD, enabled: Boolean = true, onClic
 @Composable
 fun PhotoStrip(uris: List<String>, onAdd: ()->Unit, onDel: (String)->Unit) {
     var toDelete by remember { mutableStateOf<String?>(null) }
+    var viewIndex by remember { mutableStateOf<Int?>(null) }
+    viewIndex?.let { idx ->
+        PhotoZoomViewer(uris, idx, onClose={viewIndex=null})
+    }
     toDelete?.let { p ->
         AlertDialog(onDismissRequest={toDelete=null}, containerColor=L3,
             title={Text("Supprimer la photo ?",style=Typo.headlineSmall)},
@@ -1238,15 +1617,15 @@ fun PhotoStrip(uris: List<String>, onAdd: ()->Unit, onDel: (String)->Unit) {
                 Text("Ajouter",style=Typo.labelSmall.copy(color=GOLD.copy(alpha=0.75f)))
             }
         }
-        items(uris) { path ->
+        itemsIndexed(uris) { idx, path ->
             // 3:2 tile — Fit so the whole photo is visible
             Box(Modifier.width(88.dp).height(118.dp).clip(RoundedCornerShape(14.dp))
                 .background(L0)) {
                 AsyncImage(
                     model=ImageRequest.Builder(LocalContext.current).data(File(path)).crossfade(true).build(),
-                    contentDescription=null,
+                    contentDescription="Voir la photo en grand",
                     contentScale=ContentScale.Fit,   // ← no crop, whole photo visible
-                    modifier=Modifier.fillMaxSize()
+                    modifier=Modifier.fillMaxSize().clickable{ viewIndex = idx }
                 )
                 Box(Modifier.align(Alignment.TopEnd).size(40.dp)
                     .clickable(onClickLabel="Supprimer la photo"){toDelete=path},
@@ -1335,6 +1714,39 @@ fun CampaignListScreen(
     if (showOptions) AlertDialog(onDismissRequest={showOptions=false}, containerColor=L3,
         title={Text("Options",style=Typo.headlineSmall)},
         text={Column(verticalArrangement=Arrangement.spacedBy(8.dp)){
+            // Taille du texte
+            Text("TAILLE DU TEXTE", style=Typo.labelMedium.copy(color=GOLD_MID))
+            val ctxStore = LocalContext.current
+            Row(Modifier.fillMaxWidth(), horizontalArrangement=Arrangement.spacedBy(8.dp)){
+                listOf("Petit" to 0.9f, "Normal" to 1f, "Grand" to 1.15f).forEach { (lab, sc) ->
+                    val sel = kotlin.math.abs(TextPref.scale - sc) < 0.01f
+                    Box(Modifier.weight(1f).clip(RoundedCornerShape(10.dp))
+                        .background(if(sel) GOLD.copy(alpha=0.18f) else L4)
+                        .border(1.dp, if(sel) GOLD else L5, RoundedCornerShape(10.dp))
+                        .clickable{ TextPref.scale = sc; LocalStore(ctxStore).textScale = sc }
+                        .padding(vertical=10.dp), contentAlignment=Alignment.Center){
+                        Text(lab, style=Typo.labelLarge.copy(color=if(sel) GOLD else T2))
+                    }
+                }
+            }
+            HorizontalDivider(color=L5, modifier=Modifier.padding(vertical=4.dp))
+            // Compact cards toggle
+            Row(Modifier.fillMaxWidth().clip(RoundedCornerShape(10.dp))
+                .clickable{ val nv=!CompactMode.on; CompactMode.on=nv; LocalStore(ctxStore).compactCards=nv }
+                .padding(horizontal=4.dp, vertical=8.dp),
+                verticalAlignment=Alignment.CenterVertically){
+                Icon(Icons.Default.ViewAgenda, null, Modifier.size(18.dp), tint=GOLD)
+                Spacer(Modifier.width(10.dp))
+                Column(Modifier.weight(1f)){
+                    Text("Cartes compactes", style=Typo.bodyMedium.copy(color=T1))
+                    Text("Liste dense, vignettes au lieu de grandes photos",
+                        style=Typo.labelSmall.copy(color=T4))
+                }
+                Switch(checked=CompactMode.on, onCheckedChange={ nv-> CompactMode.on=nv; LocalStore(ctxStore).compactCards=nv },
+                    colors=SwitchDefaults.colors(checkedThumbColor=GOLD, checkedTrackColor=GOLD_DIM,
+                        uncheckedThumbColor=T4, uncheckedTrackColor=L4))
+            }
+            HorizontalDivider(color=L5, modifier=Modifier.padding(vertical=4.dp))
             TextButton(onClick={onImport();showOptions=false},modifier=Modifier.fillMaxWidth()){
                 Icon(Icons.Default.FileUpload,null,Modifier.size(16.dp),tint=GOLD)
                 Spacer(Modifier.width(10.dp)); Text("Importer",style=Typo.bodyMedium.copy(color=T1))}
@@ -1552,6 +1964,11 @@ fun CampaignEditDialog(c: Campaign, onDismiss:()->Unit, onSave:(Campaign)->Unit)
     var name by remember{mutableStateOf(c.name)}
     var desc by remember{mutableStateOf(c.description)}
     var photo by remember{mutableStateOf(c.photoUri)}
+    var theme by remember{mutableStateOf(c.theme)}
+    var accentCol by remember{mutableStateOf(c.accentColor)}
+    var gauges by remember{mutableStateOf(c.gauges)}
+    var showGauges by remember{mutableStateOf(false)}
+    if (showGauges) GaugeManagerDialog(gauges, {showGauges=false}) { gauges = it }
     val photoL = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()){ uri ->
         uri ?: return@rememberLauncherForActivityResult
         scope.launch {
@@ -1588,8 +2005,57 @@ fun CampaignEditDialog(c: Campaign, onDismiss:()->Unit, onSave:(Campaign)->Unit)
                 colors=OutlinedTextFieldDefaults.colors(focusedBorderColor=GOLD,cursorColor=GOLD,focusedContainerColor=L4,unfocusedContainerColor=L4))
             OutlinedTextField(value=desc,onValueChange={desc=it},label={Text("Description")},minLines=2,modifier=Modifier.fillMaxWidth(),
                 colors=OutlinedTextFieldDefaults.colors(focusedBorderColor=GOLD,cursorColor=GOLD,focusedContainerColor=L4,unfocusedContainerColor=L4))
+            // Ambient theme picker
+            Text("AMBIANCE", style=Typo.labelMedium.copy(color=GOLD_MID), modifier=Modifier.padding(top=2.dp))
+            Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
+                horizontalArrangement=Arrangement.spacedBy(8.dp)){
+                CodexTheme.entries.forEach { t ->
+                    val sel = theme == t.id
+                    Row(Modifier.clip(RoundedCornerShape(999.dp))
+                        .background(if(sel) t.ember.copy(alpha=0.20f) else L4)
+                        .border(1.dp, if(sel) t.ember else L5, RoundedCornerShape(999.dp))
+                        .clickable{ theme = t.id }.padding(horizontal=12.dp, vertical=7.dp),
+                        verticalAlignment=Alignment.CenterVertically,
+                        horizontalArrangement=Arrangement.spacedBy(6.dp)){
+                        Box(Modifier.size(10.dp).clip(CircleShape).background(t.ember))
+                        Text(t.label, style=Typo.labelMedium.copy(color=if(sel) T1 else T3))
+                    }
+                }
+            }
+            // Couleur d'accent signature
+            Text("COULEUR D'ACCENT", style=Typo.labelMedium.copy(color=GOLD_MID))
+            FlowRow(horizontalArrangement=Arrangement.spacedBy(8.dp), verticalArrangement=Arrangement.spacedBy(8.dp)){
+                // Default (terracotta) swatch = index -1
+                Box(Modifier.size(30.dp).clip(CircleShape).background(GOLD.copy(alpha=0.25f))
+                    .border(2.dp, if(accentCol==-1) GOLD else Color.Transparent, CircleShape)
+                    .clickable{ accentCol = -1 }, contentAlignment=Alignment.Center){
+                    Box(Modifier.size(15.dp).clip(CircleShape).background(GOLD))
+                }
+                LABEL_COLORS.forEachIndexed { i, col ->
+                    Box(Modifier.size(30.dp).clip(CircleShape).background(col.copy(alpha=0.25f))
+                        .border(2.dp, if(accentCol==i) col else Color.Transparent, CircleShape)
+                        .clickable{ accentCol = i }, contentAlignment=Alignment.Center){
+                        Box(Modifier.size(15.dp).clip(CircleShape).background(col))
+                    }
+                }
+            }
+            // Gauges manager entry
+            Row(Modifier.fillMaxWidth().clip(RoundedCornerShape(10.dp)).background(L4)
+                .border(1.dp, L5, RoundedCornerShape(10.dp))
+                .clickable{ showGauges=true }.padding(horizontal=12.dp, vertical=10.dp),
+                verticalAlignment=Alignment.CenterVertically){
+                Icon(Icons.Default.Tune, null, Modifier.size(18.dp), tint=GOLD)
+                Spacer(Modifier.width(10.dp))
+                Column(Modifier.weight(1f)){
+                    Text("Jauges personnalisées", style=Typo.labelLarge.copy(color=T1))
+                    Text(if(gauges.isEmpty()) "Aucune — appuie pour créer"
+                         else "${gauges.size} jauge${if(gauges.size>1)"s" else ""}",
+                         style=Typo.labelSmall.copy(color=T3))
+                }
+                Icon(Icons.Default.ChevronRight, null, Modifier.size(20.dp), tint=T4)
+            }
         }},
-        confirmButton={Button(onClick={onSave(c.copy(name=name.ifBlank{c.name},description=desc,photoUri=photo))},
+        confirmButton={Button(onClick={onSave(c.copy(name=name.ifBlank{c.name},description=desc,photoUri=photo,theme=theme,gauges=gauges,accentColor=accentCol))},
             colors=ButtonDefaults.buttonColors(containerColor=GOLD,contentColor=L0)){Text("Sauver")}},
         dismissButton={TextButton(onClick=onDismiss){Text("Annuler")}})
 }
@@ -1602,8 +2068,9 @@ fun CampaignEditDialog(c: Campaign, onDismiss:()->Unit, onSave:(Campaign)->Unit)
 @Composable
 fun CampaignDetailScreen(
     c: Campaign, onBack:()->Unit,
+    onOpenRelations:()->Unit = {},
     onOpenNpc:(Npc)->Unit, onOpenLoc:(Location)->Unit,
-    onAddNpc:(String)->Unit, onDelNpc:(Npc)->Unit,
+    onAddNpc:(String)->Unit, onDelNpc:(Npc)->Unit, onTogglePinNpc:(Npc)->Unit = {},
     onAddLoc:(String)->Unit, onDelLoc:(Location)->Unit,
     onUpdateLabels:(List<CampaignLabel>)->Unit,
     onImportNpc:(Npc)->Unit, onImportLoc:(Location)->Unit,
@@ -1624,11 +2091,12 @@ fun CampaignDetailScreen(
     var editJournal    by remember{mutableStateOf<JournalEntry?>(null)}
     var showLabels   by remember{mutableStateOf(false)}
     var activeFilter by remember{mutableStateOf<String?>(null)}  // null = all
+    var sortMode by remember{mutableStateOf(0)}  // 0=nom, 1=année, 2=clique
 
     if(showAddNpc) AddSheet("Nouveau personnage","Nom…",GOLD,{showAddNpc=false}){onAddNpc(it)}
     if(showAddLoc) AddSheet("Nouveau lieu","Nom…",TEAL,{showAddLoc=false}){onAddLoc(it)}
     if(showAddJournal) JournalSheet(null,{showAddJournal=false}){onAddJournal(it)}
-    if(showImport) ImportSheet({showImport=false}){onImportNpc(it)}
+    if(showImport) ImportSheet({showImport=false}, onImport={onImportNpc(it)}, onImportLoc={onImportLoc(it)})
     if(showNpcChoice) NpcChoiceSheet(
         onDismiss={showNpcChoice=false},
         onImport={showNpcChoice=false; showImport=true},
@@ -1667,6 +2135,11 @@ fun CampaignDetailScreen(
                             Text(c.name,style=Typo.headlineMedium.copy(color=T1),maxLines=1,overflow=TextOverflow.Ellipsis)
                             if(c.description.isNotBlank()) Text(c.description,style=Typo.bodySmall.copy(color=T3),maxLines=1,overflow=TextOverflow.Ellipsis)
                         }
+                        // Relations dashboard
+                        if (c.npcs.isNotEmpty())
+                            IconButton(onClick=onOpenRelations){
+                                Icon(Icons.Default.Diversity3,"Tableau des relations",tint=T3,modifier=Modifier.size(20.dp))
+                            }
                         // Import an Airealm NPC card
                         IconButton(onClick={showImport=true}){
                             Icon(Icons.Default.Download,"Importer une fiche Airealm",tint=T3,modifier=Modifier.size(19.dp))
@@ -1722,10 +2195,51 @@ fun CampaignDetailScreen(
                 }
             }
             Box(Modifier.weight(1f)){
-                val filteredNpcs  = if(activeFilter==null) c.npcs else c.npcs.filter{activeFilter in it.labelIds}
+                // helpers : année + clique extraits des champs
+                fun yearRank(npc: Npc): Int {
+                    val r = (npc.role + " " + npc.major).lowercase()
+                    return when {
+                        "freshman" in r -> 1; "sophomore" in r -> 2
+                        "junior" in r -> 3; "senior" in r -> 4
+                        "grad" in r || "phd" in r -> 5; else -> 9
+                    }
+                }
+                fun cliqueOf(npc: Npc) = (npc.dna["Clique"] ?: "").trim()
+                val baseNpcs = if(activeFilter==null) c.npcs else c.npcs.filter{activeFilter in it.labelIds}
+                val filteredNpcs = when(sortMode){
+                    1 -> baseNpcs.sortedWith(compareBy({yearRank(it)},{it.name.lowercase()}))
+                    2 -> baseNpcs.sortedWith(compareBy({cliqueOf(it).ifBlank{"zzz"}.lowercase()},{it.name.lowercase()}))
+                    else -> baseNpcs.sortedBy{it.name.lowercase()}
+                }
                 val filteredLocs  = if(activeFilter==null) c.locations else c.locations.filter{activeFilter in it.labelIds}
                 when(tab){
-                    0 -> EntityList(filteredNpcs.sortedBy{it.name.lowercase()},
+                    0 -> Column(Modifier.fillMaxSize()){
+                        // Sort bar
+                        var sortMenu by remember { mutableStateOf(false) }
+                        val sortLabels = listOf("Nom","Année","Clique")
+                        Row(Modifier.fillMaxWidth().padding(start=18.dp,end=14.dp,top=6.dp,bottom=2.dp),
+                            verticalAlignment=Alignment.CenterVertically){
+                            Text("${filteredNpcs.size} personnage${if(filteredNpcs.size>1)"s" else ""}",
+                                style=Typo.labelMedium.copy(color=T4), modifier=Modifier.weight(1f))
+                            Box{
+                                Row(Modifier.clip(RoundedCornerShape(999.dp)).background(L3)
+                                    .clickable{sortMenu=true}.padding(horizontal=12.dp,vertical=6.dp),
+                                    verticalAlignment=Alignment.CenterVertically,
+                                    horizontalArrangement=Arrangement.spacedBy(5.dp)){
+                                    Icon(Icons.Default.SwapVert,null,Modifier.size(15.dp),tint=GOLD)
+                                    Text(sortLabels[sortMode],style=Typo.labelMedium.copy(color=T2))
+                                }
+                                DropdownMenu(expanded=sortMenu,onDismissRequest={sortMenu=false},containerColor=L3){
+                                    sortLabels.forEachIndexed{ idx, lab ->
+                                        DropdownMenuItem(
+                                            text={Text(lab,color=if(sortMode==idx)GOLD else T1)},
+                                            leadingIcon={if(sortMode==idx)Icon(Icons.Default.Check,null,Modifier.size(16.dp),tint=GOLD)},
+                                            onClick={sortMode=idx;sortMenu=false})
+                                    }
+                                }
+                            }
+                        }
+                        EntityList(filteredNpcs,
                         emptyTitle=if(activeFilter!=null)"Aucun résultat" else "Aucun personnage",
                         emptyHint=if(activeFilter!=null)"Aucun NPC avec ce label" else "Appuie sur + pour ajouter",
                         emptyIcon=Icons.Outlined.Person, accent=GOLD,
@@ -1734,8 +2248,10 @@ fun CampaignDetailScreen(
                         getLabels={ids->c.labels.filter{l->l.id in ids}},
                         getLabelIds={it.labelIds},
                         getPhoto={it.photoUris.firstOrNull()}, getFocal={it.heroFocal},
+                        getPinned={it.pinned}, onTogglePin={onTogglePinNpc(it)},
                         onOpen={onOpenNpc(it)},onDel={onDelNpc(it)},
                         bottomPad=pads.calculateBottomPadding(), listState=listStates[0])
+                    }
                     1 -> EntityList(filteredLocs.sortedBy{it.name.lowercase()}, typeIcon=Icons.Default.Place,
                         emptyTitle=if(activeFilter!=null)"Aucun résultat" else "Aucun lieu",
                         emptyHint=if(activeFilter!=null)"Aucun lieu avec ce label" else "Appuie sur + pour ajouter",
@@ -1767,6 +2283,7 @@ fun <T> EntityList(
     getLabels:(List<String>)->List<CampaignLabel>, getLabelIds:(T)->List<String>,
     getPhoto:(T)->String?, onOpen:(T)->Unit, onDel:(T)->Unit, bottomPad: Dp,
     typeIcon: ImageVector = Icons.Default.Person, getFocal:(T)->Float = { 0.5f },
+    getPinned:(T)->Boolean = { false }, onTogglePin:(T)->Unit = {},
     listState: LazyListState = rememberLazyListState()
 ) {
     var delTarget by remember{mutableStateOf<T?>(null)}
@@ -1792,7 +2309,8 @@ fun <T> EntityList(
                 CascadeIn(index) {
                     Box(Modifier.animateItem()) {
                         EntityCard(getName(item),getSub(item),getPreview(item),getTags(item),
-                            labels,getPhoto(item),accent,typeIcon,getFocal(item),{onOpen(item)},{delTarget=item})
+                            labels,getPhoto(item),accent,typeIcon,getFocal(item),{onOpen(item)},{delTarget=item},
+                            pinned=getPinned(item), onTogglePin={onTogglePin(item)})
                     }
                 }
             }
@@ -1805,17 +2323,75 @@ fun EntityCard(
     name: String, sub: String, preview: String, tags: String,
     labels: List<CampaignLabel>, photoUri: String?,
     accent: Color, typeIcon: ImageVector = Icons.Default.Person,
-    focal: Float = 0.5f, onClick:()->Unit, onDel:()->Unit
+    focal: Float = 0.5f, onClick:()->Unit, onDel:()->Unit,
+    pinned: Boolean = false, onTogglePin:()->Unit = {}
 ) {
     val seal = sealHue(name)
+    var quickMenu by remember { mutableStateOf(false) }
+    val tagListForBody = tags.split(',').map{it.trim()}.filter{it.isNotBlank()}
+    val hasBody = preview.isNotBlank() || labels.isNotEmpty() || tagListForBody.isNotEmpty()
+
+    // ── COMPACT MODE: dense row (thumbnail + name/sub) ───────────────────────
+    if (CompactMode.on) {
+        Box(Modifier.fillMaxWidth().padding(horizontal=16.dp, vertical=5.dp)
+            .clip(RoundedCornerShape(14.dp))
+            .floatingSurface(RoundedCornerShape(14.dp), glow=seal, elevation=8.dp, fill=L2)
+            .border(1.dp, L5.copy(alpha=0.5f), RoundedCornerShape(14.dp))
+            .pressable(onClickLabel="Ouvrir", onLongClick={ quickMenu=true }){onClick()}) {
+            DropdownMenu(expanded=quickMenu, onDismissRequest={quickMenu=false}, containerColor=L3){
+                DropdownMenuItem(text={Text("Ouvrir", color=T1)},
+                    leadingIcon={Icon(Icons.Default.OpenInFull,null,Modifier.size(18.dp),tint=T2)},
+                    onClick={quickMenu=false; onClick()})
+                DropdownMenuItem(text={Text(if(pinned)"Désépingler" else "Épingler", color=T1)},
+                    leadingIcon={Icon(if(pinned)Icons.Default.PushPin else Icons.Outlined.PushPin,null,Modifier.size(18.dp),tint=GOLD)},
+                    onClick={quickMenu=false; onTogglePin()})
+                DropdownMenuItem(text={Text("Supprimer", color=CRIM)},
+                    leadingIcon={Icon(Icons.Default.Delete,null,Modifier.size(18.dp),tint=CRIM)},
+                    onClick={quickMenu=false; onDel()})
+            }
+            Row(Modifier.fillMaxWidth().padding(10.dp), verticalAlignment=Alignment.CenterVertically,
+                horizontalArrangement=Arrangement.spacedBy(12.dp)){
+                Box(Modifier.size(52.dp).clip(RoundedCornerShape(11.dp)).background(nameGrad(name)),
+                    contentAlignment=Alignment.Center){
+                    if(photoUri!=null) AsyncImage(
+                        model=ImageRequest.Builder(LocalContext.current).data(File(photoUri)).crossfade(true).build(),
+                        contentDescription=null, contentScale=ContentScale.Crop,
+                        alignment=BiasAlignment(0f, focal*2f - 1f), modifier=Modifier.fillMaxSize())
+                    else Text(name.take(1).uppercase(), style=Typo.titleLarge.copy(color=seal))
+                }
+                Column(Modifier.weight(1f)){
+                    Row(verticalAlignment=Alignment.CenterVertically, horizontalArrangement=Arrangement.spacedBy(5.dp)){
+                        if(pinned) Icon(Icons.Default.PushPin,null,Modifier.size(13.dp),tint=GOLD)
+                        Text(name, style=Typo.titleMedium.copy(color=T1), maxLines=1, overflow=TextOverflow.Ellipsis)
+                    }
+                    if(sub.isNotBlank())
+                        Text(sub, style=Typo.bodySmall.copy(color=T3), maxLines=1, overflow=TextOverflow.Ellipsis)
+                }
+                Icon(typeIcon, null, Modifier.size(16.dp), tint=accent.copy(alpha=0.7f))
+            }
+        }
+        return
+    }
     Box(Modifier.fillMaxWidth().padding(horizontal=16.dp, vertical=9.dp)
         .floatingSurface(RoundedCornerShape(22.dp), glow=seal, elevation=18.dp, fill=L2)
         .border(1.dp, Brush.verticalGradient(listOf(seal.copy(alpha=0.30f), L5.copy(alpha=0.4f))), RoundedCornerShape(22.dp))
-        .pressable(onClickLabel="Ouvrir"){onClick()}) {
+        .pressable(onClickLabel="Ouvrir", onLongClick={ quickMenu=true }){onClick()}) {
+        DropdownMenu(expanded=quickMenu, onDismissRequest={quickMenu=false}, containerColor=L3){
+            DropdownMenuItem(text={Text("Ouvrir", color=T1)},
+                leadingIcon={Icon(Icons.Default.OpenInFull,null,Modifier.size(18.dp),tint=T2)},
+                onClick={quickMenu=false; onClick()})
+            DropdownMenuItem(text={Text(if(pinned)"Désépingler" else "Épingler", color=T1)},
+                leadingIcon={Icon(if(pinned)Icons.Default.PushPin else Icons.Outlined.PushPin,null,Modifier.size(18.dp),tint=GOLD)},
+                onClick={quickMenu=false; onTogglePin()})
+            DropdownMenuItem(text={Text("Supprimer", color=CRIM)},
+                leadingIcon={Icon(Icons.Default.Delete,null,Modifier.size(18.dp),tint=CRIM)},
+                onClick={quickMenu=false; onDel()})
+        }
         Column {
             // ── Framed banner — photo fills, name overlaid at bottom ──────────
             Box(Modifier.fillMaxWidth().height(176.dp)
-                .clip(RoundedCornerShape(topStart=22.dp, topEnd=22.dp))) {
+                .clip(if (hasBody) RoundedCornerShape(topStart=22.dp, topEnd=22.dp)
+                      else RoundedCornerShape(22.dp))) {
                 if(photoUri!=null){
                     AsyncImage(
                         model=ImageRequest.Builder(LocalContext.current).data(File(photoUri)).crossfade(true).build(),
@@ -1861,6 +2437,14 @@ fun EntityCard(
                     shadow=Shadow(L0, Offset(0f,2f), 12f)),
                     maxLines=1, overflow=TextOverflow.Ellipsis,
                     modifier=Modifier.align(Alignment.BottomStart).padding(start=18.dp, end=64.dp, bottom=14.dp))
+                // Pin badge (top-right, left of delete) when pinned
+                if (pinned) {
+                    Box(Modifier.align(Alignment.TopEnd).padding(top=8.dp, end=54.dp).size(40.dp)
+                        .clip(CircleShape).background(GOLD.copy(alpha=0.85f)),
+                        contentAlignment=Alignment.Center){
+                        Icon(Icons.Default.PushPin,"Épinglé",Modifier.size(16.dp),tint=L0)
+                    }
+                }
                 // Delete — top right
                 Box(Modifier.align(Alignment.TopEnd).padding(8.dp).size(40.dp)
                     .clip(CircleShape).background(L0.copy(alpha=0.5f))
@@ -1874,17 +2458,13 @@ fun EntityCard(
                     if(preview.isNotBlank())
                         Text(preview, style=Typo.bodyMedium.copy(color=T2),
                             maxLines=2, overflow=TextOverflow.Ellipsis)
-                    if(labels.isNotEmpty()){
+                    // Labels custom ET tags coexistent — défilement horizontal, labels d'abord
+                    val tagList = tags.split(',').map{it.trim()}.filter{it.isNotBlank()}.take(6)
+                    if(labels.isNotEmpty() || tagList.isNotEmpty()){
                         LazyRow(Modifier.padding(top=if(preview.isNotBlank()) 10.dp else 0.dp),
                             horizontalArrangement=Arrangement.spacedBy(6.dp)){
                             items(labels){lbl-> LabelChip(lbl,small=true)}
-                        }
-                    } else if(tags.isNotBlank()){
-                        LazyRow(Modifier.padding(top=if(preview.isNotBlank()) 10.dp else 0.dp),
-                            horizontalArrangement=Arrangement.spacedBy(6.dp)){
-                            items(tags.split(',').map{it.trim()}.filter{it.isNotBlank()}.take(5)){ tg ->
-                                TagCapsule(tg)
-                            }
+                            items(tagList){ tg -> TagCapsule(tg) }
                         }
                     }
                 }
@@ -1901,6 +2481,7 @@ fun EntityCard(
 fun NpcScreen(
     npc: Npc, campaignLabels: List<CampaignLabel>,
     campaignLocations: List<Location> = emptyList(),
+    campaignGauges: List<Gauge> = emptyList(),
     onOpenLoc: (Location)->Unit = {},
     onBack:()->Unit, onSave:(Npc)->Unit,
     onAddPhoto:(Uri)->Unit, onDelPhoto:(String)->Unit
@@ -1930,23 +2511,47 @@ fun NpcScreen(
         if(e.sceneHistory.isNotBlank())  appendLine("Historique: ${e.sceneHistory}")
     }.trim()
 
+    var readMode by remember { mutableStateOf(false) }
     Column(Modifier.fillMaxSize().imePadding()) {
+        var heroViewer by remember { mutableStateOf(false) }
+        if (heroViewer) PhotoZoomViewer(npc.photoUris, 0, onClose={heroViewer=false})
         EntityHero(name=e.name.ifBlank{"NPC"},
             subtitle=listOf(e.role,e.major).filter{it.isNotBlank()}.joinToString(" · "),
-            firstPhoto=npc.photoUris.firstOrNull(),accent=GOLD,onBack=onBack,
+            firstPhoto=npc.photoUris.firstOrNull(),accent=LocalAccent.current,onBack=onBack,
             focal=e.heroFocal, onFocalChange={ e=e.copy(heroFocal=it) },
-            action={IconButton(onClick={
-                val clip=ClipData.newPlainText("NPC",export())
-                (ctx.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager).setPrimaryClip(clip)
-                toast(ctx,"Résumé copié")
-            }){Icon(Icons.Default.ContentCopy,"Copier le résumé",Modifier.size(17.dp),tint=T1)}})
+            onTapPhoto=if(npc.photoUris.isNotEmpty()){{heroViewer=true}}else null,
+            action={
+                Row(verticalAlignment=Alignment.CenterVertically){
+                    IconButton(onClick={ readMode = !readMode }){
+                        Icon(if(readMode) Icons.Default.Edit else Icons.Default.MenuBook,
+                            if(readMode) "Mode édition" else "Mode lecture",
+                            Modifier.size(18.dp), tint=if(readMode) GOLD_HI else T1)
+                    }
+                    CopyButton{
+                        val clip=ClipData.newPlainText("NPC",export())
+                        (ctx.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager).setPrimaryClip(clip)
+                    }
+                }
+            })
 
-        Column(Modifier.weight(1f).verticalScroll(rememberScrollState())) {
-            PhotoStrip(npc.photoUris,{photoL.launch(arrayOf("image/*"))},onDelPhoto)
+        val (riseA, riseY) = rememberRiseIn()
+        CompositionLocalProvider(LocalReadMode provides readMode) {
+        Column(Modifier.weight(1f).graphicsLayer{ alpha = riseA; translationY = riseY }
+            .verticalScroll(rememberScrollState())) {
+            if (!readMode) PhotoStrip(npc.photoUris,{photoL.launch(arrayOf("image/*"))},onDelPhoto)
+            // Remember collapsed/expanded state per section, per fiche
+            fun isExpanded(t: String) = t !in e.collapsedSections
+            fun setExpanded(t: String, v: Boolean) {
+                e = e.copy(collapsedSections = e.collapsedSections.toMutableSet().apply {
+                    if (v) remove(t) else add(t) })
+            }
             LoreSection("Identité",Icons.Default.Person,
+                expandedOverride=isExpanded("Identité"), onExpandChange={setExpanded("Identité",it)},
                 summary=e.name.ifBlank{"—"}+if(e.role.isNotBlank())" · ${e.role}"else""){
                 LoreField("Nom",e.name,"Nom du personnage"){e=e.copy(name=it)}
                 LoreField("Âge · Année · Statut",e.role,"ex. 18yo · Freshman"){e=e.copy(role=it)}
+                LoreField("Sexe · Pronoms",e.dna["Gender"] ?: "","ex. Female (She/Her)"){ v ->
+                    e=e.copy(dna=e.dna.toMutableMap().apply{ if(v.isBlank())remove("Gender")else put("Gender",v) })}
                 LoreField("Filière · Major",e.major,"ex. English Literature"){e=e.copy(major=it)}
                 LoreField("Tags libres",e.tags,"ex. allié, majeur, antagoniste"){e=e.copy(tags=it)}
                 // Label picker
@@ -1958,13 +2563,74 @@ fun NpcScreen(
                 }
             }
             LoreSection("Cartes Airealm",Icons.Default.Description,
+                expandedOverride=isExpanded("Cartes Airealm"), onExpandChange={setExpanded("Cartes Airealm",it)},
                 summary=e.shortCard.take(80).ifBlank{"Non renseigné"}){
                 LoreField("Version courte",e.shortCard,"Résumé compact à coller dans Airealm",multi=true){e=e.copy(shortCard=it)}
                 LoreField("Version complète",e.fullCard,"Description détaillée — souvent longue",multi=true){e=e.copy(fullCard=it)}
             }
             // ── Structured DNA fields, one line each ───────────────────────
+            // ── Custom campaign gauges ──────────────────────────────────────
+            if (campaignGauges.isNotEmpty()) {
+                LoreSection("Jauges",Icons.Default.Tune, accent=GOLD,
+                    expandedOverride=isExpanded("Jauges"), onExpandChange={setExpanded("Jauges",it)},
+                    summary="${campaignGauges.size} stat${if(campaignGauges.size>1)"s" else ""} de campagne"){
+                    val readMode = LocalReadMode.current
+                    campaignGauges.forEach { g ->
+                        val col = LABEL_COLORS[g.colorIndex % LABEL_COLORS.size]
+                        val raw = e.gaugeValues[g.id] ?: ""
+                        val intensity = if (g.numeric) (raw.toFloatOrNull() ?: 0f)/100f
+                                        else gaugeLevelIntensity(raw)
+                        Column(Modifier.fillMaxWidth().padding(horizontal=20.dp, vertical=8.dp)){
+                            Row(verticalAlignment=Alignment.CenterVertically){
+                                Box(Modifier.size(9.dp).clip(CircleShape).background(col))
+                                Spacer(Modifier.width(7.dp))
+                                Text(g.name.uppercase(), style=Typo.labelSmall.copy(color=col.copy(alpha=0.85f)))
+                                Spacer(Modifier.weight(1f))
+                                Text(if(raw.isBlank()) "—" else raw + if(g.numeric) "/100" else "",
+                                    style=Typo.labelMedium.copy(color=T2))
+                            }
+                            Spacer(Modifier.height(6.dp))
+                            // gauge bar (animated width for smooth feedback)
+                            val animFill by animateFloatAsState(intensity.coerceIn(0f,1f),
+                                spring(dampingRatio=0.7f, stiffness=180f), label="gaugeFill")
+                            Box(Modifier.fillMaxWidth().height(8.dp).clip(RoundedCornerShape(999.dp)).background(L4)){
+                                Box(Modifier.fillMaxHeight().fillMaxWidth(animFill)
+                                    .clip(RoundedCornerShape(999.dp))
+                                    .background(Brush.horizontalGradient(listOf(col.copy(alpha=0.7f),col))))
+                            }
+                            // editor (hidden in read mode)
+                            if (!readMode) {
+                                Spacer(Modifier.height(8.dp))
+                                if (g.numeric) {
+                                    Slider(value=(raw.toFloatOrNull() ?: 0f),
+                                        onValueChange={ v -> e = e.copy(gaugeValues = e.gaugeValues.toMutableMap().apply{
+                                            put(g.id, v.toInt().toString()) }) },
+                                        valueRange=0f..100f,
+                                        colors=SliderDefaults.colors(thumbColor=col, activeTrackColor=col,
+                                            inactiveTrackColor=L5))
+                                } else {
+                                    Row(horizontalArrangement=Arrangement.spacedBy(6.dp)){
+                                        GAUGE_LEVELS.forEach { lvl ->
+                                            val sel = raw.equals(lvl, true)
+                                            Box(Modifier.clip(RoundedCornerShape(999.dp))
+                                                .background(if(sel) col.copy(alpha=0.22f) else L4)
+                                                .border(1.dp, if(sel) col else L5, RoundedCornerShape(999.dp))
+                                                .clickable{ e = e.copy(gaugeValues = e.gaugeValues.toMutableMap().apply{
+                                                    if(sel) remove(g.id) else put(g.id, lvl) }) }
+                                                .padding(horizontal=10.dp, vertical=5.dp)){
+                                                Text(lvl, style=Typo.labelSmall.copy(color=if(sel) col else T3))
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
             LoreSection("ADN du personnage",Icons.Default.Fingerprint,
-                summary=dnaSummary(e.dna, DNA_KEYS + "Lives")){
+                expandedOverride=isExpanded("ADN du personnage"), onExpandChange={setExpanded("ADN du personnage",it)},
+                summary=dnaSummary(e.dna, DNA_KEYS.filter{it!="Gender"} + "Lives")){
                 @Composable
                 fun field(key: String, multi: Boolean = false) {
                     LoreField(FIELD_LABELS[key] ?: key, e.dna[key] ?: "",
@@ -1974,10 +2640,11 @@ fun NpcScreen(
                     }
                 }
                 field("Lives")
-                DNA_KEYS.forEach { field(it, multi = it in listOf("Looks","Style/Persona","Voice/Humor","Texts")) }
+                DNA_KEYS.filter { it != "Gender" }.forEach { field(it, multi = it in listOf("Looks","Style/Persona","Voice/Humor","Texts")) }
             }
             // ── INERTIA — relation lens fields ─────────────────────────────
             LoreSection("Inertie · Relation",Icons.Default.Sync, accent=TEAL,
+                expandedOverride=isExpanded("Inertie · Relation"), onExpandChange={setExpanded("Inertie · Relation",it)},
                 summary=dnaSummary(e.dna, INERTIA_KEYS + "Facets")){
                 @Composable
                 fun ifield(key: String, multi: Boolean = false) {
@@ -1988,7 +2655,92 @@ fun NpcScreen(
                     }
                 }
                 INERTIA_KEYS.forEach { ifield(it, multi = it == "Anchors") }
+                // Visual facet gauges (read-only) above the editable text
+                val facetGauges = parseFacets(e.dna["Facets"] ?: "")
+                if (facetGauges.isNotEmpty()) {
+                    Column(Modifier.fillMaxWidth().padding(top=6.dp,bottom=4.dp),
+                        verticalArrangement=Arrangement.spacedBy(5.dp)){
+                        facetGauges.forEach { (label, value, intensity) ->
+                            val col = facetColor(label)
+                            Row(verticalAlignment=Alignment.CenterVertically){
+                                Text(label,style=Typo.labelMedium.copy(color=T3),modifier=Modifier.width(92.dp))
+                                Box(Modifier.weight(1f).height(6.dp).clip(RoundedCornerShape(999.dp)).background(L4)){
+                                    Box(Modifier.fillMaxHeight().fillMaxWidth(intensity.coerceIn(0.04f,1f))
+                                        .clip(RoundedCornerShape(999.dp))
+                                        .background(Brush.horizontalGradient(listOf(col.copy(alpha=0.7f),col))))
+                                }
+                                Text(value,style=Typo.labelSmall.copy(color=T2),
+                                    modifier=Modifier.width(70.dp).padding(start=8.dp))
+                            }
+                        }
+                    }
+                }
                 ifield("Facets", multi = true)
+            }
+            // ── Free-form sections — always visible, fully manual (add/rename/delete) ──
+            val readModeSec = LocalReadMode.current
+            LoreSection("Sections",Icons.Default.Article, accent=GOLD_MID,
+                expandedOverride=isExpanded("Sections"), onExpandChange={setExpanded("Sections",it)},
+                summary=if(e.sections.isEmpty()) "Ajoute tes propres champs"
+                        else "${e.sections.size} section${if(e.sections.size>1)"s" else ""}"){
+                val secList = e.sections.entries.toList()
+                fun moveSection(from: Int, to: Int) {
+                    if (to < 0 || to >= secList.size) return
+                    val keys = secList.map { it.key }.toMutableList()
+                    val k = keys.removeAt(from); keys.add(to, k)
+                    val rebuilt = LinkedHashMap<String,String>()
+                    keys.forEach { key -> rebuilt[key] = e.sections[key] ?: "" }
+                    e = e.copy(sections = rebuilt)
+                }
+                secList.forEachIndexed { idx, entry ->
+                    EditableSection(
+                        title = entry.key, content = entry.value, readMode = readModeSec,
+                        canMoveUp = idx > 0, canMoveDown = idx < secList.size - 1,
+                        onMoveUp = { moveSection(idx, idx - 1) },
+                        onMoveDown = { moveSection(idx, idx + 1) },
+                        onContentChange = { v ->
+                            e = e.copy(sections = LinkedHashMap(e.sections).apply { put(entry.key, v) })
+                        },
+                        onTitleChange = { newTitle ->
+                            if (newTitle.isNotBlank() && newTitle != entry.key) {
+                                // rebuild preserving order, rename this key
+                                val rebuilt = LinkedHashMap<String,String>()
+                                e.sections.forEach { (k,v) -> rebuilt[if(k==entry.key) newTitle else k] = v }
+                                e = e.copy(sections = rebuilt)
+                            }
+                        },
+                        onDelete = {
+                            e = e.copy(sections = LinkedHashMap(e.sections).apply { remove(entry.key) })
+                        }
+                    )
+                }
+                if (!readModeSec) {
+                    var newTitle by remember { mutableStateOf("") }
+                    Row(Modifier.fillMaxWidth().padding(horizontal=20.dp, vertical=10.dp),
+                        verticalAlignment=Alignment.CenterVertically,
+                        horizontalArrangement=Arrangement.spacedBy(8.dp)){
+                        OutlinedTextField(value=newTitle, onValueChange={newTitle=it}, singleLine=true,
+                            modifier=Modifier.weight(1f),
+                            placeholder={Text("Titre d'une nouvelle section…", color=T4,
+                                style=Typo.bodySmall.copy(fontStyle=FontStyle.Italic))},
+                            textStyle=Typo.bodyMedium.copy(color=T1),
+                            colors=OutlinedTextFieldDefaults.colors(focusedBorderColor=GOLD_MID,
+                                unfocusedBorderColor=L6, focusedContainerColor=L4, unfocusedContainerColor=L4,
+                                cursorColor=GOLD_MID))
+                        Box(Modifier.clip(RoundedCornerShape(10.dp))
+                            .background(if(newTitle.isBlank()) L4 else GOLD_MID.copy(alpha=0.22f))
+                            .border(1.dp, if(newTitle.isBlank()) L5 else GOLD_MID, RoundedCornerShape(10.dp))
+                            .clickable(enabled=newTitle.isNotBlank()){
+                                if(newTitle.isNotBlank() && !e.sections.containsKey(newTitle.trim())){
+                                    e = e.copy(sections = LinkedHashMap(e.sections).apply { put(newTitle.trim(), "") })
+                                    newTitle = ""
+                                }
+                            }.padding(horizontal=14.dp, vertical=12.dp)){
+                            Icon(Icons.Default.Add, "Ajouter la section", Modifier.size(18.dp),
+                                tint=if(newTitle.isBlank()) T4 else GOLD_MID)
+                        }
+                    }
+                }
             }
             LoreSection("Contexte",Icons.Default.Groups,
                 summary=if(e.relationships.isNotBlank())e.relationships.take(60) else "Aucune relation renseignée"){
@@ -2020,7 +2772,8 @@ fun NpcScreen(
             }
             Spacer(Modifier.height(16.dp))
         }
-        SaveBar("Sauver le personnage", enabled = e != npc){onSave(e.copy(photoUris = npc.photoUris))}
+        }
+        if (!readMode) SaveBar("Sauver le personnage", accent=LocalAccent.current, enabled = e != npc){onSave(e.copy(photoUris = npc.photoUris))}
     }
 }
 
@@ -2058,15 +2811,19 @@ fun LocScreen(
     }.trim()
 
     Column(Modifier.fillMaxSize().imePadding()) {
+        var heroViewer by remember { mutableStateOf(false) }
+        if (heroViewer) PhotoZoomViewer(loc.photoUris, 0, onClose={heroViewer=false})
         EntityHero(name=e.name.ifBlank{"Lieu"},subtitle=e.type,
             firstPhoto=loc.photoUris.firstOrNull(),accent=TEAL,onBack=onBack,
-            action={IconButton(onClick={
+            onTapPhoto=if(loc.photoUris.isNotEmpty()){{heroViewer=true}}else null,
+            action={CopyButton(accent=TEAL){
                 val clip=ClipData.newPlainText("Lieu",export())
                 (ctx.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager).setPrimaryClip(clip)
-                toast(ctx,"Résumé copié")
-            }){Icon(Icons.Default.ContentCopy,"Copier le résumé",Modifier.size(17.dp),tint=T1)}})
+            }})
 
-        Column(Modifier.weight(1f).verticalScroll(rememberScrollState())) {
+        val (riseA, riseY) = rememberRiseIn()
+        Column(Modifier.weight(1f).graphicsLayer{ alpha = riseA; translationY = riseY }
+            .verticalScroll(rememberScrollState())) {
             PhotoStrip(loc.photoUris,{photoL.launch(arrayOf("image/*"))},onDelPhoto)
             LoreSection("Identité",Icons.Default.Place,accent=TEAL,
                 summary=e.name.ifBlank{"—"}+if(e.type.isNotBlank())" · ${e.type}"else""){
@@ -2419,28 +3176,70 @@ fun campaignFullExport(c: Campaign): String = buildString {
  * Parses an Airealm "LOCATION PROFILE" building template into a structured Location.
  * Maps each template bullet to a LOC_KEYS field.
  */
-fun parseLocationCard(name: String, raw: String): Location {
-    val lines = raw.lines().map { it.trim() }.filter { it.isNotBlank() }
+/** Heuristic: does this pasted text look like a LOCATION profile rather than an NPC card? */
+fun looksLikeLocation(raw: String): Boolean {
+    val t = raw.lowercase()
+    val locHits = listOf("location profile","architectural style","zone/district","access level",
+        "spatial layout","chokepoint","sensory","soundscape","internal zones","facade","approach & entrance")
+        .count { t.contains(it) }
+    val npcHits = listOf("dna","inertia","facets","attraction:","intimacy:","major:","freshman","clique","persona")
+        .count { t.contains(it) }
+    return locHits > npcHits
+}
 
-    // grab "Label: value" allowing a leading bullet/emoji and partial label match
-    fun grab(vararg keys: String): String {
-        for (l in lines) {
-            val clean = l.trimStart('•','·','-','*',' ','\t')
-            for (k in keys) {
-                val idx = clean.indexOf(k, ignoreCase = true)
-                if (idx in 0..3 && clean.contains(":")) {
-                    val after = clean.substringAfter(":").trim()
-                    if (after.isNotBlank()) return after
+fun parseLocationCard(name: String, raw: String): Location {
+    // Keep ORIGINAL lines (we need indentation to detect sub-levels), drop only empties.
+    val rawLines = raw.lines().filter { it.isNotBlank() }
+
+    // Field label patterns — tolerant: any of these substrings opens that field.
+    // Order matters only for display; matching scans all keys per line.
+    val patterns: List<Pair<String, List<String>>> = listOf(
+        "Style"    to listOf("architectural style", "style:"),
+        "Facade"   to listOf("facade", "distinguishing feature", "distinguishing"),
+        "Entrance" to listOf("approach & entrance", "the approach", "approach", "entrance"),
+        "Zone1"    to listOf("zone 1", "zone1"),
+        "Zone2"    to listOf("zone 2", "zone2"),
+        "Zone3"    to listOf("zone 3", "zone3"),
+        "Flow"     to listOf("flow & chokepoint", "flow", "chokepoint"),
+        "Lighting" to listOf("lighting"),
+        "Acoustics" to listOf("acoustics", "soundscape"),
+        "SmellTemp" to listOf("smell & temperature", "smell", "temperature"),
+        "Vibe"     to listOf("dynamic vibe", "vibe"),
+        "Security" to listOf("security & enforcement", "security", "enforcement"),
+        "Services" to listOf("available services", "services", "loot"),
+        "Secrets"  to listOf("environmental storytelling", "hidden lore", "secret")
+    )
+    // Section headers to ignore (the "🗺️ 2. SPATIAL LAYOUT" style lines)
+    fun isSectionHeader(l: String): Boolean {
+        val c = l.trimStart { !it.isLetterOrDigit() }.trim()
+        return Regex("^[0-9]+\\.\\s").containsMatchIn(c) ||
+               c.uppercase() == c && c.length > 6 && !c.contains(":")
+    }
+    // Strip a leading bullet/emoji/whitespace for label detection
+    fun clean(l: String) = l.trimStart { it == '•' || it == '·' || it == '-' || it == '*' || it == ' ' || it == '\t' }
+
+    // Detect which field (if any) a line opens; returns key + the text after the label colon.
+    fun detect(l: String): Pair<String,String>? {
+        val c = clean(l).lowercase()
+        for ((key, pats) in patterns) {
+            for (pat in pats) {
+                val idx = c.indexOf(pat)
+                // label must be near the start (tolerate small prefixes) and be followed by ':'
+                if (idx in 0..4) {
+                    val cl = clean(l)
+                    val colon = cl.indexOf(':')
+                    if (colon >= 0) return key to cl.substring(colon + 1).trim()
+                    return key to ""
                 }
             }
         }
-        return ""
+        return null
     }
 
-    val locMap = linkedMapOf<String,String>()
+    val locMap = linkedMapOf<String, StringBuilder>()
 
-    // Header line: "Type: ... | Zone/District: ... | Access Level: ..."
-    val header = lines.firstOrNull { it.contains("Type:", true) && it.contains("|") } ?: ""
+    // ── Header line: "Type: … | Zone/District: … | Access Level: …" ──────────
+    val header = rawLines.firstOrNull { it.contains("Type:", true) && it.contains("|") } ?: ""
     val hParts = header.split("|").map { it.trim() }.filter { it.isNotBlank() }
     fun hseg(vararg ks: String) = hParts.firstOrNull { p -> ks.any { p.startsWith(it, true) } }
         ?.substringAfter(":")?.trim() ?: ""
@@ -2448,31 +3247,142 @@ fun parseLocationCard(name: String, raw: String): Location {
     val zone = hseg("Zone", "District")
     val access = hseg("Access")
     if (zone.isNotBlank() || access.isNotBlank())
-        locMap["Access"] = listOf(zone, access).filter { it.isNotBlank() }.joinToString(" · ")
+        locMap["Access"] = StringBuilder(listOf(zone, access).filter { it.isNotBlank() }.joinToString(" · "))
 
-    // Each field via its template label(s)
-    fun put(key: String, vararg labels: String) { grab(*labels).ifBlank{null}?.let { locMap[key] = it } }
-    put("Style", "Architectural Style", "Style")
-    put("Facade", "Facade", "Distinguishing")
-    put("Entrance", "Approach", "Entrance")
-    put("Zone1", "Zone 1")
-    put("Zone2", "Zone 2")
-    put("Zone3", "Zone 3")
-    put("Flow", "Flow", "Chokepoint")
-    put("Lighting", "Lighting")
-    put("Acoustics", "Acoustics", "Soundscape")
-    put("SmellTemp", "Smell", "Temperature")
-    put("Vibe", "Dynamic Vibe", "Vibe")
-    put("Security", "Security", "Enforcement")
-    put("Services", "Available Services", "Services", "Loot")
-    put("Secrets", "Environmental Storytelling", "Hidden Lore")
+    // ── Accumulate: each field grabs everything until the next field opens ───
+    var current: String? = null
+    for (l in rawLines) {
+        if (l === header) { current = null; continue }
+        val hit = detect(l)
+        if (hit != null) {
+            val (key, firstText) = hit
+            current = key
+            val sb = locMap.getOrPut(key) { StringBuilder() }
+            if (firstText.isNotBlank()) { if (sb.isNotBlank()) sb.append("\n"); sb.append(firstText) }
+        } else if (isSectionHeader(l)) {
+            current = null   // a new big section — stop appending to previous field
+        } else if (current != null) {
+            // continuation / sub-level line → append (preserve sub-indent as "  • ")
+            val txt = l.trim()
+            if (txt.isNotBlank()) {
+                val sb = locMap.getValue(current)
+                if (sb.isNotBlank()) sb.append("\n")
+                // keep a light bullet for sub-levels that had leading spaces
+                val indented = l.length - l.trimStart(' ', '\t').length >= 2
+                sb.append(if (indented) "• $txt" else txt)
+            }
+        }
+    }
 
+    val finalMap = locMap.mapValues { it.value.toString().trim() }.filterValues { it.isNotBlank() }
     return Location(
         campaignId = "",
         name = name.trim(),
         type = type,
-        loc = locMap
+        loc = finalMap
     )
+}
+
+/**
+ * Universal parser — splits ANY card format into ordered [title → content] sections.
+ * Recognises: "LABEL: value", "ALL-CAPS HEADER" then content on following lines,
+ * and "Titlecase Header" lines that act as section titles. Everything is preserved.
+ */
+/** Short relation codes → readable gauge names (Kestera-style "L 63 | R 68 | Af 58 | I 43"). */
+val REL_CODE_MAP = mapOf(
+    "l" to "Love", "r" to "Respect", "af" to "Affinity", "i" to "Intimacy",
+    "t" to "Trust", "a" to "Attraction", "c" to "Comfort", "s" to "Suspicion",
+    "f" to "Fear", "j" to "Jealousy", "aff" to "Affinity", "tr" to "Trust"
+)
+/** Detect "Code Number" pairs separated by | or , — returns ordered (gaugeName, 0..100). */
+fun parseRelationCodes(raw: String): List<Pair<String,Int>> {
+    val out = mutableListOf<Pair<String,Int>>()
+    val rx = Regex("^\\s*([A-Za-z]{1,3})\\s*[:=]?\\s*(\\d{1,3})\\s*$")
+    for (seg in raw.split('|', ',')) {
+        val m = rx.find(seg.trim()) ?: continue
+        val code = m.groupValues[1].lowercase()
+        val value = m.groupValues[2].toIntOrNull()?.coerceIn(0,100) ?: continue
+        val gname = REL_CODE_MAP[code] ?: m.groupValues[1].uppercase()
+        out.add(gname to value)
+    }
+    return out
+}
+
+fun parseGenericCard(name: String, raw: String): Npc {
+    val rawLines = raw.lines()
+    val sections = linkedMapOf<String,String>()
+    var currentTitle: String? = null
+    val buf = StringBuilder()
+
+    fun flush() {
+        if (currentTitle != null) {
+            val body = buf.toString().trim()
+            if (body.isNotEmpty()) {
+                val existing = sections[currentTitle!!]
+                // Merge duplicate section titles instead of overwriting (e.g. INVENTORY ×3)
+                sections[currentTitle!!] = if (existing.isNullOrBlank()) body else "$existing\n$body"
+            }
+        }
+        buf.setLength(0)
+    }
+
+    // Heuristics for "this line is a section header"
+    fun isHeader(line: String): Pair<String,String>? {
+        val t = line.trim()
+        if (t.isEmpty()) return null
+        // 1) "Label: value" on one line (value may be empty → header only)
+        val colon = t.indexOf(':')
+        if (colon in 1..40) {
+            val label = t.substring(0, colon).trim()
+            val value = t.substring(colon + 1).trim()
+            // label must look like a label: short, mostly letters/spaces/&/-/
+            if (label.length <= 40 && label.count { it.isLetter() } >= 2 &&
+                label.none { it.isDigit() } && !label.contains("  ")) {
+                return label to value
+            }
+        }
+        // 2) ALL-CAPS header line (no colon), e.g. "APPEARANCE & AGE", "BACKGROUND"
+        val letters = t.filter { it.isLetter() }
+        if (t.length in 2..48 && letters.length >= 2 &&
+            letters == letters.uppercase() && t == t.uppercase() &&
+            !t.endsWith(".") && t.count { it == ' ' } <= 6) {
+            return t to ""
+        }
+        // 3) Single-word Titlecase header, e.g. "Name", "Relationships", "Nature"
+        if (t.length in 2..24 && !t.contains(' ') && t.all { it.isLetter() } &&
+            t[0].isUpperCase()) {
+            return t to ""
+        }
+        return null
+    }
+
+    for (line in rawLines) {
+        val header = isHeader(line)
+        if (header != null) {
+            flush()
+            currentTitle = header.first
+            if (header.second.isNotEmpty()) buf.append(header.second)
+        } else {
+            if (currentTitle == null) {
+                // preamble before any header → "Notes"
+                if (line.isNotBlank()) { currentTitle = "Notes"; buf.append(line.trim()) }
+            } else {
+                if (buf.isNotEmpty()) buf.append("\n")
+                buf.append(line.trim())
+            }
+        }
+    }
+    flush()
+
+    // Auto-detect numeric relation codes (e.g. "Relationships" section: "L 63 | R 68 | Af 58 | I 43")
+    val autoGauges = linkedMapOf<String,String>()
+    sections.values.forEach { body ->
+        parseRelationCodes(body).forEach { (gname, value) ->
+            autoGauges["auto:$gname"] = value.toString()
+        }
+    }
+
+    return Npc(campaignId = "", name = name.trim(), sections = sections, gaugeValues = autoGauges)
 }
 
 fun parseAirealmCard(name: String, raw: String): Npc {
@@ -2481,25 +3391,59 @@ fun parseAirealmCard(name: String, raw: String): Npc {
         it.startsWith("$key:", ignoreCase = true) ||
         it.substringAfter(' ', it).startsWith("$key:", ignoreCase = true)  // tolerate emoji prefix
     }?.substringAfter(":")?.trim() ?: ""
+    // Tries every alias for a canonical field, returns the first non-blank match.
+    fun grabAliased(canonical: String): String {
+        val aliases = FIELD_ALIASES[canonical] ?: listOf(canonical)
+        for (a in aliases) { val v = grab(a); if (v.isNotBlank()) return v }
+        return ""
+    }
 
-    // ── Header : | 18yo | Freshman | Major: X | Traits: … | Lives in … ─────
-    val header = lines.firstOrNull { it.startsWith("|") } ?: ""
+    // ── Header (avec OU sans | initial) : Âge | Sexe (Pronoms) | Année | Filière | Traits: … ─────
+    // On prend la 1ère ligne contenant des séparateurs "|" (le header), pas forcément en début de ligne.
+    val header = lines.firstOrNull { it.count { c -> c == '|' } >= 2 } ?: ""
     val parts  = header.split("|").map { it.trim() }.filter { it.isNotBlank() }
-    // A segment "Major: English Literature" → on isole la valeur après ':'
+    // Segment "Major: X" / "Traits: …" → valeur après ':'
     fun seg(prefix: String) = parts.firstOrNull { it.startsWith(prefix, ignoreCase = true) }
         ?.substringAfter(":")?.trim() ?: ""
-    val major  = seg("Major")
     val traits = seg("Traits")
     val lives  = parts.firstOrNull { it.startsWith("Lives", ignoreCase = true) } ?: ""
-    // Le rôle = âge + année (Freshman…) UNIQUEMENT, sans le major (qui a son champ)
-    val role = parts.filter { p ->
-        listOf("Major","Traits","Lives").none { p.startsWith(it, ignoreCase = true) }
-    }.joinToString(" · ")
+    // Sexe · Pronoms : segment avec pronoms entre parenthèses, ou mot-clé de genre.
+    val genderRegex = Regex("\\((she|he|they|him|her|them)[^)]*\\)", RegexOption.IGNORE_CASE)
+    val genderKw = Regex("\\b(female|male|non-?binary|trans|genderfluid|agender|woman|man)\\b", RegexOption.IGNORE_CASE)
+    val gender = parts.firstOrNull { p ->
+        val pl = p.lowercase()
+        listOf("Major","Traits","Lives").none { pl.startsWith(it.lowercase()) } &&
+        (genderRegex.containsMatchIn(p) || genderKw.containsMatchIn(p))
+    } ?: ""
+    // Major/Filière : soit "Major: X" explicite, soit le segment positionnel restant
+    // (ni âge, ni sexe, ni année, ni traits/lives). On garde les segments "neutres".
+    val neutralSegs = parts.filter { p ->
+        val pl = p.lowercase()
+        listOf("major","traits","lives").none { pl.startsWith(it) } &&
+        p != gender && !genderRegex.containsMatchIn(p)
+    }
+    // Année = segment qui ressemble à un niveau d'étude ; le reste = âge / filière
+    val yearWords = listOf("freshman","sophomore","junior","senior","graduate","grad","phd","year")
+    val yearSeg = neutralSegs.firstOrNull { s -> yearWords.any { s.lowercase().contains(it) } } ?: ""
+    val ageSeg  = neutralSegs.firstOrNull { s -> s.any { it.isDigit() } && s != yearSeg } ?: ""
+    // Major explicite sinon dernier segment neutre non utilisé (âge/année)
+    val major = seg("Major").ifBlank {
+        neutralSegs.filter { it != yearSeg && it != ageSeg }.lastOrNull() ?: ""
+    }
+    // Rôle = âge · année (les infos de statut), sans la filière
+    val role = listOf(ageSeg, yearSeg).filter { it.isNotBlank() }.joinToString(" · ")
+        .ifBlank { neutralSegs.filter { it != major }.joinToString(" · ") }
 
     // ── DNA + INERTIA → structured map, one entry per field ────────────────
     val dnaMap = linkedMapOf<String,String>()
-    if (lives.isNotBlank()) dnaMap["Lives"] = lives
-    (DNA_KEYS + INERTIA_KEYS).forEach { k -> grab(k).ifBlank { null }?.let { dnaMap[k] = it } }
+    if (gender.isNotBlank()) dnaMap["Gender"] = gender
+    // Lives/Housing handled via alias too (header "Lives in …" OR a "Housing:" DNA line)
+    val livesValue = lives.ifBlank { grabAliased("Lives") }
+    if (livesValue.isNotBlank()) dnaMap["Lives"] = livesValue
+    (DNA_KEYS + INERTIA_KEYS).forEach { k ->
+        if (k != "Gender" && k != "Lives")
+            grabAliased(k).ifBlank { null }?.let { dnaMap[k] = it }
+    }
     // Facets : détection élargie — toute ligne contenant un de ces marqueurs de stat
     val facetMarkers = listOf("Attraction","Intimacy","Affinity","Trust","Comfort","Respect","Suspicion","Jealousy")
     // Facets span TWO lines on Airealm cards — collect every line that holds ≥2 markers
@@ -2525,9 +3469,11 @@ fun parseAirealmCard(name: String, raw: String): Npc {
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun ImportSheet(onDismiss: ()->Unit, onImport: (Npc)->Unit) {
+fun ImportSheet(onDismiss: ()->Unit, onImport: (Npc)->Unit, onImportLoc: ((Location)->Unit)? = null) {
     var name by remember { mutableStateOf("") }
     var raw  by remember { mutableStateOf("") }
+    var profile by remember { mutableStateOf(0) }  // 0 = Airealm, 1 = Générique
+    val isLoc = remember(raw) { profile == 0 && raw.isNotBlank() && onImportLoc != null && looksLikeLocation(raw) }
     ModalBottomSheet(onDismissRequest = onDismiss,
         sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
         containerColor = L3,
@@ -2536,9 +3482,36 @@ fun ImportSheet(onDismiss: ()->Unit, onImport: (Npc)->Unit) {
         Column(Modifier.fillMaxWidth().padding(horizontal=22.dp)
             .navigationBarsPadding().imePadding()
             .verticalScroll(rememberScrollState())) {
-            Text("Importer une fiche Airealm", style = Typo.headlineMedium.copy(color = T1))
-            Text("Colle une NPC Card — les champs se remplissent automatiquement.",
+            Text("Importer une fiche", style = Typo.headlineMedium.copy(color = T1))
+            Text("Choisis le format, colle la carte — les champs se remplissent.",
                 style = Typo.bodySmall.copy(color = T3), modifier = Modifier.padding(top = 4.dp))
+            Spacer(Modifier.height(12.dp))
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                listOf("Airealm" to 0, "Générique / Autre" to 1).forEach { (lab, idx) ->
+                    val sel = profile == idx
+                    Box(Modifier.weight(1f).clip(RoundedCornerShape(10.dp))
+                        .background(if(sel) GOLD.copy(alpha=0.18f) else L4)
+                        .border(1.dp, if(sel) GOLD else L5, RoundedCornerShape(10.dp))
+                        .clickable{ profile = idx }.padding(vertical=10.dp),
+                        contentAlignment=Alignment.Center){
+                        Text(lab, style=Typo.labelLarge.copy(color=if(sel) GOLD else T2))
+                    }
+                }
+            }
+            if (raw.isNotBlank()) {
+                val chipColor = if (isLoc) TEAL else GOLD
+                Row(Modifier.padding(top=10.dp).clip(RoundedCornerShape(999.dp))
+                    .background(chipColor.copy(alpha=0.14f))
+                    .border(1.dp, chipColor.copy(alpha=0.4f), RoundedCornerShape(999.dp))
+                    .padding(horizontal=12.dp, vertical=6.dp),
+                    verticalAlignment=Alignment.CenterVertically,
+                    horizontalArrangement=Arrangement.spacedBy(6.dp)){
+                    Icon(if(isLoc) Icons.Default.Place else Icons.Default.Person, null,
+                        Modifier.size(13.dp), tint=chipColor)
+                    Text(if(isLoc) "Lieu détecté" else "Personnage détecté",
+                        style=Typo.labelMedium.copy(color=chipColor))
+                }
+            }
             Spacer(Modifier.height(16.dp))
             OutlinedTextField(value = name, onValueChange = { name = it },
                 placeholder = { Text("Nom du personnage…", color = T4,
@@ -2558,14 +3531,20 @@ fun ImportSheet(onDismiss: ()->Unit, onImport: (Npc)->Unit) {
                 textStyle = Typo.bodySmall.copy(color = T1, fontFamily = FontFamily.Monospace))
             Spacer(Modifier.height(14.dp))
             Button(onClick = {
-                onImport(parseAirealmCard(name, raw)); onDismiss()
+                when {
+                    isLoc && onImportLoc != null -> onImportLoc(parseLocationCard(name, raw))
+                    profile == 1                 -> onImport(parseGenericCard(name, raw))
+                    else                         -> onImport(parseAirealmCard(name, raw))
+                }
+                onDismiss()
             }, enabled = name.isNotBlank() && raw.isNotBlank(),
                 modifier = Modifier.fillMaxWidth().height(50.dp), shape = RoundedCornerShape(12.dp),
-                colors = ButtonDefaults.buttonColors(containerColor = GOLD, contentColor = L0,
+                colors = ButtonDefaults.buttonColors(containerColor = if(isLoc) TEAL else GOLD, contentColor = L0,
                     disabledContainerColor = L4, disabledContentColor = T4)) {
                 Icon(Icons.Default.Download, null, Modifier.size(17.dp))
                 Spacer(Modifier.width(8.dp))
-                Text("Importer la fiche", style = Typo.labelLarge.copy(fontFamily = CinzelFamily, fontSize = 14.sp))
+                Text(if(isLoc) "Importer le lieu" else "Importer la fiche",
+                    style = Typo.labelLarge.copy(fontFamily = CinzelFamily, fontSize = 14.sp))
             }
             Spacer(Modifier.height(8.dp))
         }
@@ -2829,12 +3808,20 @@ fun GalleryViewer(
 fun CascadeIn(index: Int, content: @Composable ()->Unit) {
     var shown by remember { mutableStateOf(false) }
     LaunchedEffect(Unit) {
-        delay((index.coerceAtMost(8) * 45).toLong())
+        delay((index.coerceAtMost(10) * 55).toLong())  // slightly longer, more visible stagger
         shown = true
     }
-    val alpha by animateFloatAsState(if (shown) 1f else 0f, tween(280), label="cascadeAlpha")
-    val ty by animateFloatAsState(if (shown) 0f else 24f, tween(320, easing=EaseOutCubic), label="cascadeY")
-    Box(Modifier.graphicsLayer { this.alpha = alpha; translationY = ty }) { content() }
+    val alpha by animateFloatAsState(if (shown) 1f else 0f, tween(360), label="cascadeAlpha")
+    // Rise + gentle scale "pop" with a soft spring for a premium settle
+    val ty by animateFloatAsState(if (shown) 0f else 38f,
+        spring(dampingRatio = 0.74f, stiffness = 230f), label="cascadeY")
+    val scale by animateFloatAsState(if (shown) 1f else 0.94f,
+        spring(dampingRatio = 0.7f, stiffness = 260f), label="cascadeScale")
+    Box(Modifier.graphicsLayer {
+        this.alpha = alpha; translationY = ty
+        scaleX = scale; scaleY = scale
+        transformOrigin = TransformOrigin(0.5f, 0.2f)
+    }) { content() }
 }
 
 
@@ -2970,6 +3957,7 @@ fun EmberDust(modifier: Modifier = Modifier) {
             )
         }
     }
+    val emberColor by animateColorAsState(CurrentTheme.theme.ember, tween(800), label="emberCol")
     val t = rememberInfiniteTransition(label="ember")
     val clock by t.animateFloat(0f, 1f,
         infiniteRepeatable(tween(28000, easing=LinearEasing), RepeatMode.Restart), label="emberClock")
@@ -2986,9 +3974,9 @@ fun EmberDust(modifier: Modifier = Modifier) {
             val a = e.maxA * edge * twinkle
             if (a > 0.004f) {
                 // soft outer glow
-                drawCircle(GOLD.copy(alpha = a * 0.35f), e.size * 2.6f, Offset(x, y))
+                drawCircle(emberColor.copy(alpha = a * 0.35f), e.size * 2.6f, Offset(x, y))
                 // bright core
-                drawCircle(GOLD_HI.copy(alpha = a), e.size, Offset(x, y))
+                drawCircle(emberColor.copy(alpha = a), e.size, Offset(x, y))
             }
         }
     }
@@ -3095,4 +4083,314 @@ fun ImportLocSheet(onDismiss: ()->Unit, onImport: (Location)->Unit) {
             Spacer(Modifier.height(8.dp))
         }
     }
+}
+
+
+// ─────────────────────────────────────────────────────────────────────────────
+// PHOTO ZOOM VIEWER — fullscreen pinch-zoom + swipe between a fiche's photos
+// ─────────────────────────────────────────────────────────────────────────────
+
+@Composable
+fun PhotoZoomViewer(uris: List<String>, startIndex: Int, onClose: ()->Unit) {
+    if (uris.isEmpty()) { onClose(); return }
+    val pagerState = rememberPagerState(
+        initialPage = startIndex.coerceIn(0, uris.size-1)){ uris.size }
+    androidx.compose.ui.window.Dialog(
+        onDismissRequest = onClose,
+        properties = androidx.compose.ui.window.DialogProperties(usePlatformDefaultWidth = false)
+    ) {
+        // Drag-to-dismiss state (vertical)
+        var dragY by remember { mutableStateOf(0f) }
+        val dismissProgress = (kotlin.math.abs(dragY) / 600f).coerceIn(0f, 1f)
+        val bgAlpha = 1f - dismissProgress * 0.6f
+        Box(Modifier.fillMaxSize().background(
+            Brush.verticalGradient(listOf(
+                Color(0xFF0A0908).copy(alpha=bgAlpha),
+                Color.Black.copy(alpha=bgAlpha),
+                Color(0xFF0A0908).copy(alpha=bgAlpha)
+            )))) {
+            HorizontalPager(state=pagerState, modifier=Modifier.fillMaxSize()) { page ->
+                var scale by remember { mutableStateOf(1f) }
+                var offX by remember { mutableStateOf(0f) }
+                var offY by remember { mutableStateOf(0f) }
+                Box(Modifier.fillMaxSize()
+                    .pointerInput(Unit){
+                        detectTapGestures(onDoubleTap = {
+                            if (scale > 1f) { scale = 1f; offX = 0f; offY = 0f } else scale = 2.5f
+                        })
+                    }
+                    .pointerInput(Unit){
+                        detectTransformGestures { _, pan, zoom, _ ->
+                            scale = (scale * zoom).coerceIn(1f, 4f)
+                            if (scale > 1f) { offX += pan.x; offY += pan.y }
+                            else { offX = 0f; offY = 0f }
+                        }
+                    }
+                    // vertical drag-to-dismiss only when not zoomed
+                    .pointerInput(scale){
+                        if (scale <= 1f) {
+                            detectVerticalDragGestures(
+                                onDragEnd = { if (kotlin.math.abs(dragY) > 240f) onClose() else dragY = 0f }
+                            ){ _, d -> dragY += d }
+                        }
+                    }, contentAlignment=Alignment.Center){
+                    AsyncImage(
+                        model=ImageRequest.Builder(LocalContext.current).data(File(uris[page])).crossfade(true).build(),
+                        contentDescription=null, contentScale=ContentScale.Fit,
+                        modifier=Modifier.fillMaxSize().padding(vertical=12.dp).graphicsLayer{
+                            scaleX=scale; scaleY=scale
+                            translationX=offX; translationY=offY + dragY
+                            alpha = 1f - dismissProgress * 0.4f
+                        })
+                }
+            }
+            // close button
+            Box(Modifier.align(Alignment.TopEnd).statusBarsPadding().padding(14.dp)
+                .size(40.dp).clip(CircleShape).background(Color.Black.copy(alpha=0.5f))
+                .clickable{ onClose() }, contentAlignment=Alignment.Center){
+                Icon(Icons.Default.Close, "Fermer", Modifier.size(20.dp), tint=Color.White)
+            }
+            // page indicator
+            if (uris.size > 1) {
+                Box(Modifier.align(Alignment.BottomCenter).navigationBarsPadding().padding(bottom=20.dp)
+                    .clip(RoundedCornerShape(999.dp)).background(Color.Black.copy(alpha=0.5f))
+                    .padding(horizontal=14.dp, vertical=6.dp)){
+                    Text("${pagerState.currentPage+1} / ${uris.size}",
+                        style=Typo.labelMedium.copy(color=Color.White))
+                }
+            }
+        }
+    }
+}
+
+
+/** Copy icon that briefly turns into a green check + haptic — visual confirmation. */
+@Composable
+fun CopyButton(accent: Color = GOLD, onCopy: ()->Unit) {
+    var copied by remember { mutableStateOf(false) }
+    val haptic = LocalHapticFeedback.current
+    LaunchedEffect(copied) { if (copied) { delay(1400); copied = false } }
+    IconButton(onClick={ onCopy(); haptic.performHapticFeedback(HapticFeedbackType.LongPress); copied = true }) {
+        AnimatedContent(targetState=copied, label="copy",
+            transitionSpec={ (fadeIn(tween(150))+scaleIn(tween(150), initialScale=0.6f))
+                .togetherWith(fadeOut(tween(120))) }) { done ->
+            if (done) Icon(Icons.Default.Check, "Copié", Modifier.size(17.dp), tint=Color(0xFF6FCF97))
+            else Icon(Icons.Default.ContentCopy, "Copier le résumé", Modifier.size(17.dp), tint=T1)
+        }
+    }
+}
+
+
+// ─────────────────────────────────────────────────────────────────────────────
+// RELATIONS DASHBOARD — social overview: each NPC's key facets as coloured gauges
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** Ordered facet levels → a 0..1 intensity for gauges. */
+private val FACET_LEVELS = mapOf(
+    "none" to 0.0f, "aucun" to 0.0f, "aucune" to 0.0f,
+    "unverified" to 0.1f, "minimal" to 0.2f, "low" to 0.25f, "faible" to 0.25f,
+    "guarded" to 0.35f, "neutral" to 0.4f, "neutre" to 0.4f,
+    "medium" to 0.55f, "moderate" to 0.6f, "modéré" to 0.6f, "modere" to 0.6f,
+    "high" to 0.8f, "élevé" to 0.8f, "eleve" to 0.8f, "strong" to 0.85f,
+    "intense" to 0.95f, "max" to 1.0f, "total" to 1.0f
+)
+
+/** Parse "❤️Attraction: Unverified | 💞Intimacy: None | …" into ordered (label,value,intensity). */
+fun parseFacets(raw: String): List<Triple<String,String,Float>> {
+    if (raw.isBlank()) return emptyList()
+    return raw.split("|","\n").mapNotNull { seg ->
+        // Drop any leading non-letter chars (emojis, bullets, spaces) — emojis can't be Char literals
+        val s = seg.trim().trimStart { !it.isLetter() }
+        if (!s.contains(":")) return@mapNotNull null
+        val label = s.substringBefore(":").trim().filter { it.isLetter() || it == ' ' }.trim()
+        val value = s.substringAfter(":").trim()
+        if (label.isBlank() || value.isBlank()) return@mapNotNull null
+        val intensity = FACET_LEVELS[value.lowercase()] ?: 0.45f
+        Triple(label, value, intensity)
+    }
+}
+
+/** Colour for a facet by name (warm = affinity/attraction, cool = trust, red = suspicion/jealousy). */
+fun facetColor(label: String): Color = when {
+    label.contains("Attraction", true) || label.contains("Intimacy", true) -> Color(0xFFE87CA8)
+    label.contains("Affinity", true) || label.contains("Comfort", true)    -> Color(0xFFE89B6C)
+    label.contains("Trust", true) || label.contains("Respect", true)       -> Color(0xFF5B9A8B)
+    label.contains("Suspicion", true) || label.contains("Jealousy", true)  -> Color(0xFFB04A3A)
+    else -> GOLD
+}
+
+@Composable
+fun RelationsScreen(c: Campaign, onBack: ()->Unit, onOpenNpc: (Npc)->Unit) {
+    // NPCs that have facet data, sorted by overall "closeness" (avg of positive facets)
+    val withFacets = c.npcs.map { it to parseFacets(it.dna["Facets"] ?: "") }
+        .filter { it.second.isNotEmpty() || it.first.gaugeValues.isNotEmpty() }
+    Column(Modifier.fillMaxSize().imePadding()) {
+        // header
+        Row(Modifier.fillMaxWidth().statusBarsPadding().padding(start=8.dp,end=16.dp,top=8.dp,bottom=8.dp),
+            verticalAlignment=Alignment.CenterVertically){
+            Box(Modifier.clip(RoundedCornerShape(999.dp)).background(L2)
+                .pressable(onClickLabel="Retour"){onBack()}.padding(horizontal=14.dp,vertical=8.dp)){
+                Row(verticalAlignment=Alignment.CenterVertically,horizontalArrangement=Arrangement.spacedBy(6.dp)){
+                    Icon(Icons.Default.ArrowBack,null,Modifier.size(18.dp),tint=GOLD)
+                    Text("Retour",style=Typo.labelLarge.copy(color=T1))
+                }
+            }
+        }
+        Column(Modifier.padding(start=20.dp,end=20.dp,bottom=12.dp)){
+            Text("RELATIONS",style=Typo.labelLarge.copy(color=GOLD_MID))
+            Text("Tableau social",style=Typo.headlineLarge.copy(color=T1))
+        }
+        if (withFacets.isEmpty()) {
+            Box(Modifier.fillMaxSize(),contentAlignment=Alignment.Center){
+                Column(horizontalAlignment=Alignment.CenterHorizontally){
+                    Icon(Icons.Default.Diversity3,null,Modifier.size(40.dp),tint=T4)
+                    Spacer(Modifier.height(10.dp))
+                    Text("Aucune relation renseignée",style=Typo.bodyMedium.copy(color=T3))
+                    Text("Les Facets et jauges des personnages s'affichent ici.",
+                        style=Typo.bodySmall.copy(color=T4),modifier=Modifier.padding(top=4.dp))
+                }
+            }
+        } else {
+            LazyColumn(Modifier.fillMaxSize(),
+                contentPadding=PaddingValues(start=16.dp,end=16.dp,bottom=40.dp),
+                verticalArrangement=Arrangement.spacedBy(10.dp)){
+                items(withFacets, key={it.first.id}){ (npc, facets) ->
+                    val seal = sealHue(npc.name)
+                    Column(Modifier.fillMaxWidth()
+                        .floatingSurface(RoundedCornerShape(18.dp), glow=seal, elevation=10.dp, fill=L2)
+                        .border(1.dp, L5.copy(alpha=0.5f), RoundedCornerShape(18.dp))
+                        .pressable(onClickLabel="Ouvrir ${npc.name}"){onOpenNpc(npc)}
+                        .padding(16.dp)){
+                        // name row
+                        Row(verticalAlignment=Alignment.CenterVertically,horizontalArrangement=Arrangement.spacedBy(10.dp)){
+                            Box(Modifier.size(36.dp).clip(CircleShape).background(nameGrad(npc.name)),
+                                contentAlignment=Alignment.Center){
+                                if(npc.photoUris.isNotEmpty())
+                                    AsyncImage(model=ImageRequest.Builder(LocalContext.current).data(File(npc.photoUris.first())).crossfade(true).build(),
+                                        contentDescription=null,contentScale=ContentScale.Crop,modifier=Modifier.fillMaxSize())
+                                else Text(npc.name.take(1).uppercase(),style=Typo.labelLarge.copy(color=seal))
+                            }
+                            Text(npc.name,style=Typo.titleLarge.copy(color=T1))
+                        }
+                        Spacer(Modifier.height(12.dp))
+                        // facet gauges (only the 4 main ones to stay readable)
+                        val main = facets.filter { f -> listOf("Attraction","Trust","Affinity","Comfort","Respect")
+                            .any { f.first.contains(it, true) } }.take(5)
+                        main.forEach { (label, value, intensity) ->
+                            val col = facetColor(label)
+                            Row(Modifier.fillMaxWidth().padding(vertical=3.dp),verticalAlignment=Alignment.CenterVertically){
+                                Text(label,style=Typo.labelMedium.copy(color=T3),modifier=Modifier.width(96.dp))
+                                Box(Modifier.weight(1f).height(7.dp).clip(RoundedCornerShape(999.dp)).background(L4)){
+                                    Box(Modifier.fillMaxHeight().fillMaxWidth(intensity.coerceIn(0.04f,1f))
+                                        .clip(RoundedCornerShape(999.dp))
+                                        .background(Brush.horizontalGradient(listOf(col.copy(alpha=0.7f),col))))
+                                }
+                                Text(value,style=Typo.labelSmall.copy(color=T2),
+                                    modifier=Modifier.width(74.dp).padding(start=8.dp))
+                            }
+                        }
+                        // Custom campaign gauges for this NPC
+                        c.gauges.filter { npc.gaugeValues[it.id]?.isNotBlank() == true }.forEach { g ->
+                            val raw = npc.gaugeValues[g.id] ?: ""
+                            val col = LABEL_COLORS[g.colorIndex % LABEL_COLORS.size]
+                            val intensity = if (g.numeric) (raw.toFloatOrNull() ?: 0f)/100f
+                                            else gaugeLevelIntensity(raw)
+                            Row(Modifier.fillMaxWidth().padding(vertical=3.dp),verticalAlignment=Alignment.CenterVertically){
+                                Text(g.name,style=Typo.labelMedium.copy(color=T3),modifier=Modifier.width(96.dp))
+                                Box(Modifier.weight(1f).height(7.dp).clip(RoundedCornerShape(999.dp)).background(L4)){
+                                    Box(Modifier.fillMaxHeight().fillMaxWidth(intensity.coerceIn(0.04f,1f))
+                                        .clip(RoundedCornerShape(999.dp))
+                                        .background(Brush.horizontalGradient(listOf(col.copy(alpha=0.7f),col))))
+                                }
+                                Text(if(g.numeric) "$raw/100" else raw,style=Typo.labelSmall.copy(color=T2),
+                                    modifier=Modifier.width(74.dp).padding(start=8.dp))
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+
+// ─────────────────────────────────────────────────────────────────────────────
+// GAUGE MANAGER — create/edit per-campaign custom gauges (stats)
+// ─────────────────────────────────────────────────────────────────────────────
+
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+fun GaugeManagerDialog(initial: List<Gauge>, onDismiss: ()->Unit, onSave: (List<Gauge>)->Unit) {
+    var gauges by remember { mutableStateOf(initial) }
+    var newName by remember { mutableStateOf("") }
+    var newColor by remember { mutableStateOf(0) }
+    var newNumeric by remember { mutableStateOf(false) }
+    AlertDialog(onDismissRequest=onDismiss, containerColor=L3,
+        title={Text("Jauges personnalisées", style=Typo.headlineSmall)},
+        text={Column(Modifier.verticalScroll(rememberScrollState()),
+            verticalArrangement=Arrangement.spacedBy(8.dp)){
+            Text("Crée des stats propres à cette campagne (Peur, Sanity, Attraction…).",
+                style=Typo.bodySmall.copy(color=T3))
+            // Existing gauges
+            gauges.forEach { g ->
+                Row(Modifier.fillMaxWidth(), verticalAlignment=Alignment.CenterVertically){
+                    Box(Modifier.size(14.dp).clip(CircleShape).background(LABEL_COLORS[g.colorIndex % LABEL_COLORS.size]))
+                    Spacer(Modifier.width(10.dp))
+                    Column(Modifier.weight(1f)){
+                        Text(g.name, style=Typo.bodyMedium.copy(color=T1))
+                        Text(if(g.numeric) "Numérique (0–100)" else "Niveaux (None→Max)",
+                            style=Typo.labelSmall.copy(color=T4))
+                    }
+                    IconButton(onClick={ gauges = gauges.filter { it.id != g.id } }){
+                        Icon(Icons.Default.Close, "Supprimer", Modifier.size(16.dp), tint=CRIM)
+                    }
+                }
+            }
+            if (gauges.isNotEmpty()) HorizontalDivider(color=L5)
+            // New gauge form
+            Text("Nouvelle jauge", style=Typo.labelMedium.copy(color=T3))
+            OutlinedTextField(value=newName, onValueChange={newName=it}, singleLine=true,
+                placeholder={Text("Nom (ex. Peur)", color=T4, style=Typo.bodyMedium.copy(fontStyle=FontStyle.Italic))},
+                modifier=Modifier.fillMaxWidth(),
+                colors=OutlinedTextFieldDefaults.colors(focusedBorderColor=GOLD, unfocusedBorderColor=L6,
+                    focusedContainerColor=L4, unfocusedContainerColor=L4, cursorColor=GOLD),
+                textStyle=Typo.bodyMedium.copy(color=T1))
+            // Type toggle
+            Row(Modifier.fillMaxWidth(), horizontalArrangement=Arrangement.spacedBy(8.dp)){
+                listOf("Niveaux" to false, "Numérique" to true).forEach { (lab, num) ->
+                    val sel = newNumeric == num
+                    Box(Modifier.weight(1f).clip(RoundedCornerShape(10.dp))
+                        .background(if(sel) GOLD.copy(alpha=0.18f) else L4)
+                        .border(1.dp, if(sel) GOLD else L5, RoundedCornerShape(10.dp))
+                        .clickable{ newNumeric = num }.padding(vertical=9.dp),
+                        contentAlignment=Alignment.Center){
+                        Text(lab, style=Typo.labelMedium.copy(color=if(sel) GOLD else T2))
+                    }
+                }
+            }
+            // Colour picker
+            FlowRow(horizontalArrangement=Arrangement.spacedBy(8.dp), verticalArrangement=Arrangement.spacedBy(8.dp)){
+                LABEL_COLORS.forEachIndexed { i, col ->
+                    Box(Modifier.size(26.dp).clip(CircleShape).background(col.copy(alpha=0.25f))
+                        .border(2.dp, if(newColor==i) col else Color.Transparent, CircleShape)
+                        .clickable{ newColor=i }, contentAlignment=Alignment.Center){
+                        Box(Modifier.size(13.dp).clip(CircleShape).background(col))
+                    }
+                }
+            }
+            Button(onClick={
+                if(newName.isNotBlank()){
+                    gauges = gauges + Gauge(name=newName.trim(), colorIndex=newColor, numeric=newNumeric)
+                    newName=""; newNumeric=false
+                }
+            }, enabled=newName.isNotBlank(), modifier=Modifier.fillMaxWidth(),
+                colors=ButtonDefaults.buttonColors(containerColor=GOLD, contentColor=L0,
+                    disabledContainerColor=L4, disabledContentColor=T4)){
+                Icon(Icons.Default.Add, null, Modifier.size(16.dp)); Spacer(Modifier.width(6.dp))
+                Text("Ajouter la jauge")
+            }
+        }},
+        confirmButton={Button(onClick={onSave(gauges); onDismiss()},
+            colors=ButtonDefaults.buttonColors(containerColor=GOLD, contentColor=L0)){Text("Terminé")}},
+        dismissButton={TextButton(onClick=onDismiss){Text("Annuler", color=T3)}})
 }
