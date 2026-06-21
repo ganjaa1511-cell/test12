@@ -2581,7 +2581,17 @@ fun NpcScreen(
                         val raw = e.gaugeValues[g.id] ?: ""
                         val intensity = if (g.numeric) (raw.toFloatOrNull() ?: 0f)/100f
                                         else gaugeLevelIntensity(raw)
-                        Column(Modifier.fillMaxWidth().padding(horizontal=20.dp, vertical=8.dp)){
+                        // Heatmap tint + glow for strong values (matches the relations grid)
+                        val gi = intensity.coerceIn(0f,1f)
+                        val gBg = col.copy(alpha = 0.03f + gi * 0.12f)
+                        val gStrong = ((gi - 0.6f) / 0.4f).coerceIn(0f, 1f)
+                        val gShape = RoundedCornerShape(14.dp)
+                        Column(Modifier.fillMaxWidth().padding(horizontal=16.dp, vertical=5.dp)
+                            .then(if (gStrong > 0f) Modifier.shadow((9*gStrong).dp, gShape, ambientColor=col, spotColor=col) else Modifier)
+                            .clip(gShape)
+                            .background(Brush.verticalGradient(listOf(gBg, gBg.copy(alpha=gBg.alpha*0.5f))))
+                            .border(1.dp, col.copy(alpha=0.10f + gStrong*0.22f), gShape)
+                            .padding(horizontal=14.dp, vertical=11.dp)){
                             Row(verticalAlignment=Alignment.CenterVertically){
                                 Box(Modifier.size(9.dp).clip(CircleShape).background(col))
                                 Spacer(Modifier.width(7.dp))
@@ -4287,6 +4297,22 @@ fun RelationsScreen(c: Campaign, onBack: ()->Unit, onOpenNpc: (Npc)->Unit) {
         Column(Modifier.padding(start=20.dp,end=20.dp,bottom=12.dp)){
             Text("RELATIONS",style=Typo.labelLarge.copy(color=GOLD_MID))
             Text("Tableau social",style=Typo.headlineLarge.copy(color=T1))
+            // Mini-résumé : compte relations / proches / tendues
+            if (withFacets.isNotEmpty()) {
+                val total = withFacets.size
+                val close = withFacets.count { closeness(it.second) >= 0.66f }
+                val tense = withFacets.count { (it.first.let { n -> parseFacets(n.dna["Facets"] ?: "") }
+                    .filter { f -> listOf("Suspicion","Jealousy").any { f.first.contains(it, true) } }
+                    .map { it.third }.maxOrNull() ?: 0f) >= 0.6f }
+                val parts = buildList {
+                    add("$total relation${if(total>1)"s" else ""}")
+                    if (close > 0) add("$close proche${if(close>1)"s" else ""}")
+                    if (tense > 0) add("$tense tendue${if(tense>1)"s" else ""}")
+                }
+                Text(parts.joinToString("  ·  "),
+                    style=Typo.labelMedium.copy(color=T3, letterSpacing=0.5.sp),
+                    modifier=Modifier.padding(top=6.dp))
+            }
         }
         if (withFacets.isEmpty()) {
             Box(Modifier.fillMaxSize(),contentAlignment=Alignment.Center){
@@ -4311,28 +4337,36 @@ fun RelationsScreen(c: Campaign, onBack: ()->Unit, onOpenNpc: (Npc)->Unit) {
                         .padding(16.dp)){
                         // name row
                         Row(verticalAlignment=Alignment.CenterVertically,horizontalArrangement=Arrangement.spacedBy(10.dp)){
-                            Box(Modifier.size(36.dp).clip(CircleShape).background(nameGrad(npc.name)),
+                            Box(Modifier.size(46.dp).clip(CircleShape)
+                                .background(nameGrad(npc.name))
+                                .border(1.5.dp, seal.copy(alpha=0.5f), CircleShape),
                                 contentAlignment=Alignment.Center){
                                 if(npc.photoUris.isNotEmpty())
                                     AsyncImage(model=ImageRequest.Builder(LocalContext.current).data(File(npc.photoUris.first())).crossfade(true).build(),
                                         contentDescription=null,contentScale=ContentScale.Crop,modifier=Modifier.fillMaxSize())
-                                else Text(npc.name.take(1).uppercase(),style=Typo.labelLarge.copy(color=seal))
+                                else Text(npc.name.take(1).uppercase(),
+                                    style=Typo.titleLarge.copy(color=seal, fontWeight=FontWeight.SemiBold))
                             }
                             Text(npc.name,style=Typo.titleLarge.copy(color=T1),
                                 modifier=Modifier.weight(1f), maxLines=1, overflow=TextOverflow.Ellipsis)
-                            // Closeness score pill
+                            // Closeness score pill (avec qualificatif)
                             val score = (closeness(facets) * 100).toInt()
                             if (score > 0) {
-                                val scoreCol = when {
-                                    score >= 66 -> Color(0xFF5FB89A)
-                                    score >= 33 -> GOLD
-                                    else -> T3
+                                val (scoreCol, scoreWord) = when {
+                                    score >= 66 -> Color(0xFF5FB89A) to "Proche"
+                                    score >= 40 -> GOLD to "Lié"
+                                    score >= 25 -> GOLD_MID to "Distant"
+                                    else -> T3 to "Ténu"
                                 }
-                                Box(Modifier.clip(RoundedCornerShape(999.dp))
+                                Row(Modifier.clip(RoundedCornerShape(999.dp))
                                     .background(scoreCol.copy(alpha=0.15f))
                                     .border(1.dp, scoreCol.copy(alpha=0.4f), RoundedCornerShape(999.dp))
-                                    .padding(horizontal=10.dp, vertical=4.dp)){
+                                    .padding(horizontal=10.dp, vertical=4.dp),
+                                    verticalAlignment=Alignment.CenterVertically,
+                                    horizontalArrangement=Arrangement.spacedBy(5.dp)){
                                     Text("$score%", style=Typo.labelMedium.copy(color=scoreCol, fontWeight=FontWeight.SemiBold))
+                                    Box(Modifier.size(3.dp).clip(CircleShape).background(scoreCol.copy(alpha=0.5f)))
+                                    Text(scoreWord, style=Typo.labelSmall.copy(color=scoreCol.copy(alpha=0.85f)))
                                 }
                             }
                         }
