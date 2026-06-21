@@ -2659,21 +2659,8 @@ fun NpcScreen(
                 // Visual facet gauges (read-only) above the editable text
                 val facetGauges = parseFacets(e.dna["Facets"] ?: "")
                 if (facetGauges.isNotEmpty()) {
-                    Column(Modifier.fillMaxWidth().padding(top=6.dp,bottom=4.dp),
-                        verticalArrangement=Arrangement.spacedBy(5.dp)){
-                        facetGauges.forEach { (label, value, intensity) ->
-                            val col = facetColor(label)
-                            Row(verticalAlignment=Alignment.CenterVertically){
-                                Text(label,style=Typo.labelMedium.copy(color=T3),modifier=Modifier.width(92.dp))
-                                Box(Modifier.weight(1f).height(6.dp).clip(RoundedCornerShape(999.dp)).background(L4)){
-                                    Box(Modifier.fillMaxHeight().fillMaxWidth(intensity.coerceIn(0.04f,1f))
-                                        .clip(RoundedCornerShape(999.dp))
-                                        .background(Brush.horizontalGradient(listOf(col.copy(alpha=0.7f),col))))
-                                }
-                                Text(value,style=Typo.labelSmall.copy(color=T2),
-                                    modifier=Modifier.width(70.dp).padding(start=8.dp))
-                            }
-                        }
+                    Column(Modifier.fillMaxWidth().padding(start=20.dp,end=20.dp,top=6.dp,bottom=4.dp)){
+                        GaugeGrid(facetGauges) { facetColor(it) }
                     }
                 }
                 ifield("Facets", multi = true)
@@ -4220,11 +4207,71 @@ fun facetColor(label: String): Color = when {
     else -> GOLD
 }
 
+/** A compact gauge cell: label on top, value chip, thin bar — designed for 2-column grids. */
+@Composable
+fun GaugeCell(label: String, value: String, intensity: Float, color: Color, modifier: Modifier = Modifier) {
+    val i = intensity.coerceIn(0f,1f)
+    val animFill by animateFloatAsState(i, spring(dampingRatio=0.78f, stiffness=180f), label="cellFill")
+    // Heatmap: cell background tint grows with intensity (very subtle)
+    val bgTint = color.copy(alpha = 0.03f + i * 0.13f)
+    // Glow only kicks in on strong intensities (>0.6), scaling up toward Max
+    val strong = ((i - 0.6f) / 0.4f).coerceIn(0f, 1f)
+    val cellShape = RoundedCornerShape(12.dp)
+    Box(modifier
+        .then(if (strong > 0f)
+            Modifier.shadow(elevation = (10 * strong).dp, shape = cellShape,
+                ambientColor = color, spotColor = color)
+        else Modifier)
+        .clip(cellShape)
+        .background(Brush.verticalGradient(listOf(bgTint, bgTint.copy(alpha = bgTint.alpha * 0.5f))))
+        .border(1.dp, color.copy(alpha = 0.10f + strong * 0.25f), cellShape)
+        .padding(vertical=8.dp, horizontal=10.dp)) {
+        Column {
+            Row(verticalAlignment=Alignment.CenterVertically) {
+                Box(Modifier.size(6.dp).clip(CircleShape).background(color))
+                Spacer(Modifier.width(6.dp))
+                Text(label, style=Typo.labelSmall.copy(color=T3, letterSpacing=0.4.sp),
+                    maxLines=1, overflow=TextOverflow.Ellipsis, modifier=Modifier.weight(1f))
+                Text(value, style=Typo.labelSmall.copy(
+                    color=if(strong>0.3f) color else T1, fontWeight=FontWeight.Medium), maxLines=1)
+            }
+            Spacer(Modifier.height(6.dp))
+            Box(Modifier.fillMaxWidth().height(5.dp).clip(RoundedCornerShape(999.dp)).background(L4.copy(alpha=0.7f))){
+                Box(Modifier.fillMaxHeight().fillMaxWidth(animFill.coerceIn(0.03f,1f))
+                    .clip(RoundedCornerShape(999.dp))
+                    .background(Brush.horizontalGradient(listOf(color.copy(alpha=0.6f), color))))
+            }
+        }
+    }
+}
+
+/** Lay out gauge entries in a tidy 2-column grid (rows of 2). */
+@Composable
+fun GaugeGrid(entries: List<Triple<String,String,Float>>, colorOf: (String)->Color) {
+    Column(Modifier.fillMaxWidth(), verticalArrangement=Arrangement.spacedBy(7.dp)) {
+        entries.chunked(2).forEach { rowPair ->
+            Row(Modifier.fillMaxWidth(), horizontalArrangement=Arrangement.spacedBy(8.dp)) {
+                rowPair.forEach { (label, value, intensity) ->
+                    GaugeCell(label, value, intensity, colorOf(label), Modifier.weight(1f))
+                }
+                if (rowPair.size == 1) Spacer(Modifier.weight(1f))  // keep last odd cell left-aligned
+            }
+        }
+    }
+}
+
 @Composable
 fun RelationsScreen(c: Campaign, onBack: ()->Unit, onOpenNpc: (Npc)->Unit) {
     // NPCs that have facet data, sorted by overall "closeness" (avg of positive facets)
+    // Closeness score = average intensity of positive facets (Attraction, Affinity, Trust, Comfort, Respect, Intimacy)
+    val positiveFacets = listOf("Attraction","Affinity","Trust","Comfort","Respect","Intimacy")
+    fun closeness(facets: List<Triple<String,String,Float>>): Float {
+        val pos = facets.filter { f -> positiveFacets.any { f.first.contains(it, true) } }
+        return if (pos.isEmpty()) 0f else pos.map { it.third }.average().toFloat()
+    }
     val withFacets = c.npcs.map { it to parseFacets(it.dna["Facets"] ?: "") }
         .filter { it.second.isNotEmpty() || it.first.gaugeValues.isNotEmpty() }
+        .sortedByDescending { closeness(it.second) }  // strongest relationships first
     Column(Modifier.fillMaxSize().imePadding()) {
         // header
         Row(Modifier.fillMaxWidth().statusBarsPadding().padding(start=8.dp,end=16.dp,top=8.dp,bottom=8.dp),
@@ -4271,42 +4318,41 @@ fun RelationsScreen(c: Campaign, onBack: ()->Unit, onOpenNpc: (Npc)->Unit) {
                                         contentDescription=null,contentScale=ContentScale.Crop,modifier=Modifier.fillMaxSize())
                                 else Text(npc.name.take(1).uppercase(),style=Typo.labelLarge.copy(color=seal))
                             }
-                            Text(npc.name,style=Typo.titleLarge.copy(color=T1))
+                            Text(npc.name,style=Typo.titleLarge.copy(color=T1),
+                                modifier=Modifier.weight(1f), maxLines=1, overflow=TextOverflow.Ellipsis)
+                            // Closeness score pill
+                            val score = (closeness(facets) * 100).toInt()
+                            if (score > 0) {
+                                val scoreCol = when {
+                                    score >= 66 -> Color(0xFF5FB89A)
+                                    score >= 33 -> GOLD
+                                    else -> T3
+                                }
+                                Box(Modifier.clip(RoundedCornerShape(999.dp))
+                                    .background(scoreCol.copy(alpha=0.15f))
+                                    .border(1.dp, scoreCol.copy(alpha=0.4f), RoundedCornerShape(999.dp))
+                                    .padding(horizontal=10.dp, vertical=4.dp)){
+                                    Text("$score%", style=Typo.labelMedium.copy(color=scoreCol, fontWeight=FontWeight.SemiBold))
+                                }
+                            }
                         }
                         Spacer(Modifier.height(12.dp))
                         // facet gauges (only the 4 main ones to stay readable)
-                        val main = facets.filter { f -> listOf("Attraction","Trust","Affinity","Comfort","Respect")
-                            .any { f.first.contains(it, true) } }.take(5)
-                        main.forEach { (label, value, intensity) ->
-                            val col = facetColor(label)
-                            Row(Modifier.fillMaxWidth().padding(vertical=3.dp),verticalAlignment=Alignment.CenterVertically){
-                                Text(label,style=Typo.labelMedium.copy(color=T3),modifier=Modifier.width(96.dp))
-                                Box(Modifier.weight(1f).height(7.dp).clip(RoundedCornerShape(999.dp)).background(L4)){
-                                    Box(Modifier.fillMaxHeight().fillMaxWidth(intensity.coerceIn(0.04f,1f))
-                                        .clip(RoundedCornerShape(999.dp))
-                                        .background(Brush.horizontalGradient(listOf(col.copy(alpha=0.7f),col))))
-                                }
-                                Text(value,style=Typo.labelSmall.copy(color=T2),
-                                    modifier=Modifier.width(74.dp).padding(start=8.dp))
-                            }
+                        // Toutes les facettes (plus de limite) + jauges custom, en grille 2 colonnes
+                        val facetEntries = facets.map { (label, value, intensity) ->
+                            Triple(label, value, intensity)
                         }
-                        // Custom campaign gauges for this NPC
-                        c.gauges.filter { npc.gaugeValues[it.id]?.isNotBlank() == true }.forEach { g ->
-                            val raw = npc.gaugeValues[g.id] ?: ""
-                            val col = LABEL_COLORS[g.colorIndex % LABEL_COLORS.size]
-                            val intensity = if (g.numeric) (raw.toFloatOrNull() ?: 0f)/100f
-                                            else gaugeLevelIntensity(raw)
-                            Row(Modifier.fillMaxWidth().padding(vertical=3.dp),verticalAlignment=Alignment.CenterVertically){
-                                Text(g.name,style=Typo.labelMedium.copy(color=T3),modifier=Modifier.width(96.dp))
-                                Box(Modifier.weight(1f).height(7.dp).clip(RoundedCornerShape(999.dp)).background(L4)){
-                                    Box(Modifier.fillMaxHeight().fillMaxWidth(intensity.coerceIn(0.04f,1f))
-                                        .clip(RoundedCornerShape(999.dp))
-                                        .background(Brush.horizontalGradient(listOf(col.copy(alpha=0.7f),col))))
-                                }
-                                Text(if(g.numeric) "$raw/100" else raw,style=Typo.labelSmall.copy(color=T2),
-                                    modifier=Modifier.width(74.dp).padding(start=8.dp))
+                        val gaugeEntries = c.gauges
+                            .filter { npc.gaugeValues[it.id]?.isNotBlank() == true }
+                            .map { g ->
+                                val raw = npc.gaugeValues[g.id] ?: ""
+                                val intensity = if (g.numeric) (raw.toFloatOrNull() ?: 0f)/100f
+                                                else gaugeLevelIntensity(raw)
+                                Triple(g.name, if(g.numeric) "$raw/100" else raw, intensity)
                             }
-                        }
+                        val allEntries = facetEntries + gaugeEntries
+                        val gaugeColorMap = c.gauges.associate { it.name to LABEL_COLORS[it.colorIndex % LABEL_COLORS.size] }
+                        GaugeGrid(allEntries) { label -> gaugeColorMap[label] ?: facetColor(label) }
                     }
                 }
             }
