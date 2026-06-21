@@ -167,7 +167,7 @@ private val Typo = Typography(
     titleMedium    = TextStyle(fontFamily = CinzelFamily, fontWeight = FontWeight.SemiBold,  fontSize = 14.sp, lineHeight = 20.sp),
     labelLarge     = TextStyle(fontFamily = FontFamily.SansSerif, fontWeight = FontWeight.SemiBold, fontSize = 10.sp, letterSpacing = 2.4.sp),
     labelMedium    = TextStyle(fontFamily = FontFamily.SansSerif, fontWeight = FontWeight.Medium,   fontSize = 9.sp,  letterSpacing = 2.0.sp),
-    labelSmall     = TextStyle(fontFamily = FontFamily.SansSerif, fontWeight = FontWeight.Normal,   fontSize = 9.sp,  letterSpacing = 1.6.sp),
+    labelSmall     = TextStyle(fontFamily = FontFamily.SansSerif, fontWeight = FontWeight.Normal,   fontSize = 8.5.sp,  letterSpacing = 1.6.sp),
     bodyLarge      = TextStyle(fontFamily = AlegreyaFamily, fontWeight = FontWeight.Normal,   fontSize = 16.sp, lineHeight = 25.sp),
     bodyMedium     = TextStyle(fontFamily = AlegreyaFamily, fontWeight = FontWeight.Normal,   fontSize = 14.sp, lineHeight = 21.sp),
     bodySmall      = TextStyle(fontFamily = FontFamily.SansSerif, fontWeight = FontWeight.Normal,   fontSize = 11.sp, lineHeight = 17.sp),
@@ -1110,7 +1110,7 @@ fun MetaPill(icon: ImageVector, text: String, tint: Color) {
     Row(Modifier.clip(RoundedCornerShape(999.dp))
         .background(tint.copy(alpha=0.10f))
         .border(1.dp, tint.copy(alpha=0.28f), RoundedCornerShape(999.dp))
-        .padding(horizontal=9.dp, vertical=4.dp),
+        .padding(horizontal=8.dp, vertical=4.dp),
         verticalAlignment=Alignment.CenterVertically,
         horizontalArrangement=Arrangement.spacedBy(5.dp)){
         Icon(icon, null, Modifier.size(11.dp), tint=tint)
@@ -1154,14 +1154,14 @@ fun LabelChip(label: CampaignLabel, selected: Boolean = true, small: Boolean = f
         mod.clip(RoundedCornerShape(999.dp))
             .background(if (selected) color.copy(alpha=0.18f) else color.copy(alpha=0.05f))
             .border(1.dp, if (selected) color.copy(alpha=0.55f) else color.copy(alpha=0.18f), RoundedCornerShape(999.dp))
-            .padding(horizontal=if(small) 7.dp else 10.dp, vertical=if(small) 3.dp else 5.dp),
+            .padding(horizontal=if(small) 8.dp else 10.dp, vertical=if(small) 4.dp else 5.dp),
         verticalAlignment=Alignment.CenterVertically,
-        horizontalArrangement=Arrangement.spacedBy(4.dp)
+        horizontalArrangement=Arrangement.spacedBy(5.dp)
     ) {
         if (selected && onClick != null)
             Icon(Icons.Default.Check, null, Modifier.size(if(small) 10.dp else 12.dp), tint = color)
         else
-            Box(Modifier.size(6.dp).clip(CircleShape).background(color))
+            Box(Modifier.size(5.dp).clip(CircleShape).background(color))
         Text(label.name,
             style=if(small) Typo.labelSmall.copy(color=color) else Typo.labelMedium.copy(color=color))
     }
@@ -1291,7 +1291,7 @@ fun LoreSection(
     val haptic = LocalHapticFeedback.current
     // Each section floats — soft shadow + glassy fill + accent hairline when open
     Column(Modifier.fillMaxWidth().padding(horizontal=14.dp, vertical=6.dp)
-        .floatingSurface(RoundedCornerShape(18.dp), glow=accent, elevation=if(expanded) 12.dp else 6.dp, fill=L2)
+        .floatingSurface(RoundedCornerShape(18.dp), glow=accent, elevation=if(expanded) 16.dp else 8.dp, fill=L2)
         .border(1.dp, if(expanded) accent.copy(alpha=0.28f) else L5.copy(alpha=0.5f), RoundedCornerShape(18.dp))) {
         Row(Modifier.fillMaxWidth()
             .semantics { stateDescription = if (expanded) "Section dépliée" else "Section repliée" }
@@ -1308,7 +1308,7 @@ fun LoreSection(
                 Icon(icon, null, Modifier.size(15.dp), tint=accent)
             }
             Spacer(Modifier.width(11.dp))
-            Text(title.uppercase(), style=Typo.labelLarge.copy(color=accent, letterSpacing=1.4.sp))
+            Text(title.uppercase(), style=Typo.titleMedium.copy(color=accent, letterSpacing=1.4.sp, fontWeight=FontWeight.SemiBold))
             Spacer(Modifier.weight(1f))
             Icon(if(expanded)Icons.Default.ExpandLess else Icons.Default.ExpandMore,
                 null, Modifier.size(20.dp), tint=accent.copy(alpha=0.5f))
@@ -1335,15 +1335,15 @@ fun LoreField(
     if (readMode) {
         // In read mode, hide empty fields entirely for a clean "play" view
         if (value.isBlank()) return
-        Column(Modifier.fillMaxWidth().padding(horizontal=20.dp, vertical=7.dp)) {
-            Text(label.uppercase(), style=Typo.labelSmall.copy(color=accent.copy(alpha=0.55f)))
+        Column(Modifier.fillMaxWidth().padding(horizontal=20.dp, vertical=9.dp)) {
+            Text(label.uppercase(), style=Typo.labelSmall.copy(color=accent.copy(alpha=0.72f), letterSpacing=0.8.sp))
             Spacer(Modifier.height(4.dp))
             Text(value, style=Typo.bodyLarge.copy(color=T1))
         }
         return
     }
-    Column(Modifier.fillMaxWidth().padding(horizontal=20.dp, vertical=7.dp)) {
-        Text(label.uppercase(), style=Typo.labelSmall.copy(color=accent.copy(alpha=0.55f)))
+    Column(Modifier.fillMaxWidth().padding(horizontal=20.dp, vertical=9.dp)) {
+        Text(label.uppercase(), style=Typo.labelSmall.copy(color=accent.copy(alpha=0.72f), letterSpacing=0.8.sp))
         Spacer(Modifier.height(5.dp))
         BasicTextField(
             value=value, onValueChange=onChange,
@@ -1375,7 +1375,7 @@ fun EditableSection(
 ) {
     if (readMode) {
         if (content.isBlank()) return
-        Column(Modifier.fillMaxWidth().padding(horizontal=20.dp, vertical=7.dp)) {
+        Column(Modifier.fillMaxWidth().padding(horizontal=20.dp, vertical=9.dp)) {
             Text(prettyTitle(title).uppercase(), style=Typo.labelSmall.copy(color=GOLD_MID.copy(alpha=0.65f)))
             Spacer(Modifier.height(4.dp))
             Text(content, style=Typo.bodyLarge.copy(color=T1))
@@ -1383,7 +1383,7 @@ fun EditableSection(
         return
     }
     var localTitle by remember(title) { mutableStateOf(title) }
-    Column(Modifier.fillMaxWidth().padding(horizontal=20.dp, vertical=7.dp)) {
+    Column(Modifier.fillMaxWidth().padding(horizontal=20.dp, vertical=9.dp)) {
         // Title row: editable title + delete
         Row(verticalAlignment=Alignment.CenterVertically, horizontalArrangement=Arrangement.spacedBy(6.dp)) {
             BasicTextField(
@@ -1530,8 +1530,8 @@ fun EntityHero(
             }
         }
         Box(Modifier.fillMaxSize().background(
-            Brush.verticalGradient(listOf(L0.copy(alpha=0.55f),Color.Transparent,Color.Transparent,
-                L0.copy(alpha=0.75f),L1.copy(alpha=0.97f)))))
+            Brush.verticalGradient(listOf(L0.copy(alpha=0.58f),Color.Transparent,Color.Transparent,
+                L0.copy(alpha=0.86f),L1.copy(alpha=0.99f)))))
         Row(Modifier.fillMaxWidth().statusBarsPadding().padding(horizontal=6.dp,vertical=4.dp),
             verticalAlignment=Alignment.CenterVertically,
             horizontalArrangement=Arrangement.SpaceBetween) {
@@ -1763,7 +1763,7 @@ fun CampaignListScreen(
                 expanded=fabExpanded,
                 containerColor=GOLD,contentColor=L0,
                 modifier=Modifier.navigationBarsPadding()
-                    .shadow(16.dp, RoundedCornerShape(16.dp), ambientColor=GOLD, spotColor=L0),
+                    .shadow(16.dp, RoundedCornerShape(18.dp), ambientColor=GOLD, spotColor=L0),
                 icon={Icon(Icons.Default.Add,null,Modifier.size(20.dp))},
                 text={Text("Campagne",style=Typo.labelLarge.copy(fontFamily=CinzelFamily,fontSize=13.sp))})
         }) { pads ->
@@ -1809,7 +1809,7 @@ fun CampaignListScreen(
                                     Box(Modifier.weight(1f).height(1.5.dp).background(
                                         Brush.horizontalGradient(listOf(GOLD, GOLD.copy(alpha=0f)))))
                                     Text("◆", style=TextStyle(fontSize=8.sp, color=GOLD),
-                                        modifier=Modifier.padding(horizontal=7.dp))
+                                        modifier=Modifier.padding(horizontal=8.dp))
                                     Box(Modifier.weight(1f).height(1.dp).background(
                                         Brush.horizontalGradient(listOf(GOLD.copy(alpha=0.4f), GOLD.copy(alpha=0f)))))
                                 }
@@ -1900,7 +1900,7 @@ fun CampaignCard(c: Campaign, onOpen:()->Unit, onEdit:()->Unit, onDelete:()->Uni
     var menuOpen by remember { mutableStateOf(false) }
     // COVER-STYLE campaign card: big title over art, narrative subtitle, metadata below
     Box(Modifier.fillMaxWidth().padding(horizontal=16.dp,vertical=9.dp)
-        .floatingSurface(RoundedCornerShape(22.dp), glow=seal, elevation=18.dp, fill=L2)
+        .floatingSurface(RoundedCornerShape(22.dp), glow=seal, elevation=16.dp, fill=L2)
         .border(1.dp, Brush.verticalGradient(listOf(seal.copy(alpha=0.30f), L5.copy(alpha=0.4f))), RoundedCornerShape(22.dp))
         .pressable(onClickLabel="Ouvrir la campagne"){onOpen()}) {
         Column {
@@ -2121,7 +2121,7 @@ fun CampaignDetailScreen(
                 expanded=fabExpanded,
                 containerColor=when(tab){0->GOLD;1->TEAL;2->GOLD_MID;else->TEAL},contentColor=L0,
                 modifier=Modifier.navigationBarsPadding()
-                    .shadow(14.dp, RoundedCornerShape(16.dp), ambientColor=GOLD, spotColor=L0),
+                    .shadow(14.dp, RoundedCornerShape(18.dp), ambientColor=GOLD, spotColor=L0),
                 icon={Icon(when(tab){0->Icons.Default.PersonAdd;1->Icons.Default.AddLocation;2->Icons.Default.HistoryEdu;else->Icons.Default.AddPhotoAlternate},null,Modifier.size(20.dp))},
                 text={Text(when(tab){0->"Personnage";1->"Lieu";2->"Entrée";else->"Photo"},style=Typo.labelLarge.copy(fontFamily=CinzelFamily,fontSize=13.sp))})
         }) { pads ->
@@ -2352,7 +2352,7 @@ fun EntityCard(
             }
             Row(Modifier.fillMaxWidth().padding(10.dp), verticalAlignment=Alignment.CenterVertically,
                 horizontalArrangement=Arrangement.spacedBy(12.dp)){
-                Box(Modifier.size(52.dp).clip(RoundedCornerShape(11.dp)).background(nameGrad(name)),
+                Box(Modifier.size(52.dp).clip(RoundedCornerShape(12.dp)).background(nameGrad(name)),
                     contentAlignment=Alignment.Center){
                     if(photoUri!=null) AsyncImage(
                         model=ImageRequest.Builder(LocalContext.current).data(File(photoUri)).crossfade(true).build(),
@@ -2374,7 +2374,7 @@ fun EntityCard(
         return
     }
     Box(Modifier.fillMaxWidth().padding(horizontal=16.dp, vertical=9.dp)
-        .floatingSurface(RoundedCornerShape(22.dp), glow=seal, elevation=18.dp, fill=L2)
+        .floatingSurface(RoundedCornerShape(22.dp), glow=seal, elevation=16.dp, fill=L2)
         .border(1.dp, Brush.verticalGradient(listOf(seal.copy(alpha=0.30f), L5.copy(alpha=0.4f))), RoundedCornerShape(22.dp))
         .pressable(onClickLabel="Ouvrir", onLongClick={ quickMenu=true }){onClick()}) {
         DropdownMenu(expanded=quickMenu, onDismissRequest={quickMenu=false}, containerColor=L3){
@@ -2424,9 +2424,9 @@ fun EntityCard(
                         1f to L0.copy(alpha=0.90f))))
                 // Type-coloured pill top-left — visual identity per type
                 Row(Modifier.align(Alignment.TopStart).padding(12.dp)
-                    .clip(RoundedCornerShape(999.dp)).background(L0.copy(alpha=0.5f))
-                    .border(1.dp, accent.copy(alpha=0.4f), RoundedCornerShape(999.dp))
-                    .padding(horizontal=9.dp, vertical=5.dp),
+                    .clip(RoundedCornerShape(999.dp)).background(L0.copy(alpha=0.62f))
+                    .border(1.dp, accent.copy(alpha=0.45f), RoundedCornerShape(999.dp))
+                    .padding(horizontal=10.dp, vertical=5.dp),
                     verticalAlignment=Alignment.CenterVertically, horizontalArrangement=Arrangement.spacedBy(5.dp)){
                     Icon(typeIcon, null, Modifier.size(12.dp), tint=accent)
                     if(sub.isNotBlank())
@@ -3902,16 +3902,16 @@ fun ContinueCard(c: Campaign, modifier: Modifier = Modifier, onOpen: ()->Unit) {
             Text("REPRENDRE", style=Typo.labelMedium.copy(color=GOLD_MID))
         }
         Box(Modifier.fillMaxWidth().height(96.dp)
-            .floatingSurface(RoundedCornerShape(20.dp), glow=seal, elevation=16.dp, fill=L2)
+            .floatingSurface(RoundedCornerShape(18.dp), glow=seal, elevation=16.dp, fill=L2)
             .border(1.dp, Brush.horizontalGradient(listOf(seal.copy(alpha=0.4f), L5.copy(alpha=0.3f))),
-                RoundedCornerShape(20.dp))
+                RoundedCornerShape(18.dp))
             .pressable(onClickLabel="Reprendre ${c.name}"){onOpen()}){
             // cover photo or monogram
             if (c.photoUri != null) {
                 AsyncImage(
                     model=ImageRequest.Builder(LocalContext.current).data(File(c.photoUri)).crossfade(true).build(),
                     contentDescription=null, contentScale=ContentScale.Crop,
-                    modifier=Modifier.fillMaxSize().clip(RoundedCornerShape(20.dp)).alpha(0.5f))
+                    modifier=Modifier.fillMaxSize().clip(RoundedCornerShape(18.dp)).alpha(0.5f))
                 Box(Modifier.fillMaxSize().background(Brush.horizontalGradient(
                     listOf(L2.copy(alpha=0.95f), L2.copy(alpha=0.55f)))))
             } else {
@@ -4258,7 +4258,7 @@ fun RelationsScreen(c: Campaign, onBack: ()->Unit, onOpenNpc: (Npc)->Unit) {
                 items(withFacets, key={it.first.id}){ (npc, facets) ->
                     val seal = sealHue(npc.name)
                     Column(Modifier.fillMaxWidth()
-                        .floatingSurface(RoundedCornerShape(18.dp), glow=seal, elevation=10.dp, fill=L2)
+                        .floatingSurface(RoundedCornerShape(18.dp), glow=seal, elevation=8.dp, fill=L2)
                         .border(1.dp, L5.copy(alpha=0.5f), RoundedCornerShape(18.dp))
                         .pressable(onClickLabel="Ouvrir ${npc.name}"){onOpenNpc(npc)}
                         .padding(16.dp)){
