@@ -23,6 +23,7 @@ import androidx.compose.foundation.LocalIndication
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.gestures.detectTransformGestures
 import androidx.compose.foundation.gestures.detectVerticalDragGestures
 import androidx.compose.ui.BiasAlignment
@@ -833,6 +834,8 @@ fun CompanionApp() {
             is Screen.NpcDetail -> {
                 val c   = campaigns.firstOrNull{it.id==s.campaignId} ?: run{screen=Screen.Campaigns;return@AnimatedContent}
                 val npc = c.npcs.firstOrNull{it.id==s.npcId} ?: run{screen=Screen.Campaign(s.campaignId);return@AnimatedContent}
+                // Navigation order = the campaign's NPC list order
+                val idx = c.npcs.indexOfFirst { it.id == npc.id }
                 NpcScreen(npc, campaignLabels=c.labels,
                     campaignLocations=c.locations,
                     campaignGauges=c.gauges,
@@ -840,7 +843,10 @@ fun CompanionApp() {
                     onBack    = { screen = Screen.Campaign(s.campaignId) },
                     onSave    = { e -> persist(campaigns.map{cc->if(cc.id==e.campaignId)cc.copy(npcs=cc.npcs.map{if(it.id==e.id)e else it})else cc}); toast(ctx,"Sauvegardé") },
                     onAddPhoto = { uri -> addPhoto(uri) { p -> val u=npc.copy(photoUris=npc.photoUris+p); persist(campaigns.map{cc->if(cc.id==u.campaignId)cc.copy(npcs=cc.npcs.map{if(it.id==u.id)u else it})else cc}) } },
-                    onDelPhoto = { path -> PhotoStore.delete(path); val u=npc.copy(photoUris=npc.photoUris.filter{it!=path}); persist(campaigns.map{cc->if(cc.id==u.campaignId)cc.copy(npcs=cc.npcs.map{if(it.id==u.id)u else it})else cc}) }
+                    onDelPhoto = { path -> PhotoStore.delete(path); val u=npc.copy(photoUris=npc.photoUris.filter{it!=path}); persist(campaigns.map{cc->if(cc.id==u.campaignId)cc.copy(npcs=cc.npcs.map{if(it.id==u.id)u else it})else cc}) },
+                    hasPrev = idx > 0, hasNext = idx in 0 until (c.npcs.size - 1),
+                    onPrev = { if (idx > 0) screen = Screen.NpcDetail(c.id, c.npcs[idx-1].id) },
+                    onNext = { if (idx in 0 until (c.npcs.size - 1)) screen = Screen.NpcDetail(c.id, c.npcs[idx+1].id) }
                 )
             }
             is Screen.Relations -> {
@@ -1071,15 +1077,22 @@ fun Ornament(accent: Color = GOLD, modifier: Modifier = Modifier) {
 )
 
 @Composable
-fun StatItemAnim(target: Int, label: String, accent: Color, modifier: Modifier = Modifier) {
+fun StatItemAnim(target: Int, label: String, accent: Color, icon: ImageVector? = null, modifier: Modifier = Modifier) {
     var play by remember { mutableStateOf(false) }
     LaunchedEffect(target) { play = true }
     val animated by animateIntAsState(if (play) target else 0, tween(700, easing=EaseOutCubic), label="countup")
-    StatItem(animated.toString(), label, accent, modifier)
+    StatItem(animated.toString(), label, accent, icon, modifier)
 }
 @Composable
-fun StatItem(value: String, label: String, accent: Color, modifier: Modifier = Modifier) {
+fun StatItem(value: String, label: String, accent: Color, icon: ImageVector? = null, modifier: Modifier = Modifier) {
     Column(modifier, horizontalAlignment=Alignment.CenterHorizontally) {
+        if (icon != null) {
+            Box(Modifier.size(26.dp).clip(CircleShape).background(accent.copy(alpha=0.12f)),
+                contentAlignment=Alignment.Center){
+                Icon(icon, null, Modifier.size(14.dp), tint=accent)
+            }
+            Spacer(Modifier.height(6.dp))
+        }
         Text(value, style=TextStyle(fontFamily=CinzelFamily, fontWeight=FontWeight.Bold,
             fontSize=28.sp, color=accent))
         Text(label.uppercase(), style=Typo.labelSmall.copy(color=T3, letterSpacing=1.5.sp),
@@ -1820,11 +1833,11 @@ fun CampaignListScreen(
                         }
                         Spacer(Modifier.height(16.dp))
                         Row(Modifier.fillMaxWidth(), verticalAlignment=Alignment.CenterVertically) {
-                            StatItemAnim(campaigns.size,"Campagnes",GOLD,Modifier.weight(1f))
+                            StatItemAnim(campaigns.size,"Campagnes",GOLD,Icons.Outlined.MenuBook,Modifier.weight(1f))
                             StatDivider()
-                            StatItemAnim(campaigns.sumOf{it.npcs.size},"Personnages",GOLD_HI,Modifier.weight(1f))
+                            StatItemAnim(campaigns.sumOf{it.npcs.size},"Personnages",GOLD_HI,Icons.Default.Groups,Modifier.weight(1f))
                             StatDivider()
-                            StatItemAnim(campaigns.sumOf{it.locations.size},"Lieux",TEAL,Modifier.weight(1f))
+                            StatItemAnim(campaigns.sumOf{it.locations.size},"Lieux",TEAL,Icons.Default.Place,Modifier.weight(1f))
                         }
                     }
                 }
@@ -1897,11 +1910,12 @@ fun CampaignListScreen(
 @Composable
 fun CampaignCard(c: Campaign, onOpen:()->Unit, onEdit:()->Unit, onDelete:()->Unit) {
     val seal = sealHue(c.name)
+    val accent = c.accent()
     var menuOpen by remember { mutableStateOf(false) }
     // COVER-STYLE campaign card: big title over art, narrative subtitle, metadata below
     Box(Modifier.fillMaxWidth().padding(horizontal=16.dp,vertical=9.dp)
         .floatingSurface(RoundedCornerShape(22.dp), glow=seal, elevation=16.dp, fill=L2)
-        .border(1.dp, Brush.verticalGradient(listOf(seal.copy(alpha=0.30f), L5.copy(alpha=0.4f))), RoundedCornerShape(22.dp))
+        .border(1.dp, Brush.verticalGradient(listOf(accent.copy(alpha=0.32f), L5.copy(alpha=0.4f))), RoundedCornerShape(22.dp))
         .pressable(onClickLabel="Ouvrir la campagne"){onOpen()}) {
         Column {
             // ── Cover area: photo/monogram + title overlaid ──────────────────
@@ -2485,7 +2499,9 @@ fun NpcScreen(
     campaignGauges: List<Gauge> = emptyList(),
     onOpenLoc: (Location)->Unit = {},
     onBack:()->Unit, onSave:(Npc)->Unit,
-    onAddPhoto:(Uri)->Unit, onDelPhoto:(String)->Unit
+    onAddPhoto:(Uri)->Unit, onDelPhoto:(String)->Unit,
+    hasPrev: Boolean = false, hasNext: Boolean = false,
+    onPrev: ()->Unit = {}, onNext: ()->Unit = {}
 ) {
     val ctx = LocalContext.current
     var e by remember(npc.id){mutableStateOf(npc)}
@@ -2516,24 +2532,51 @@ fun NpcScreen(
     Column(Modifier.fillMaxSize().imePadding()) {
         var heroViewer by remember { mutableStateOf(false) }
         if (heroViewer) PhotoZoomViewer(npc.photoUris, 0, onClose={heroViewer=false})
-        EntityHero(name=e.name.ifBlank{"NPC"},
-            subtitle=listOf(e.role,e.major).filter{it.isNotBlank()}.joinToString(" · "),
-            firstPhoto=npc.photoUris.firstOrNull(),accent=LocalAccent.current,onBack=onBack,
-            focal=e.heroFocal, onFocalChange={ e=e.copy(heroFocal=it) },
-            onTapPhoto=if(npc.photoUris.isNotEmpty()){{heroViewer=true}}else null,
-            action={
-                Row(verticalAlignment=Alignment.CenterVertically){
-                    IconButton(onClick={ readMode = !readMode }){
-                        Icon(if(readMode) Icons.Default.Edit else Icons.Default.MenuBook,
-                            if(readMode) "Mode édition" else "Mode lecture",
-                            Modifier.size(18.dp), tint=if(readMode) GOLD_HI else T1)
-                    }
-                    CopyButton{
-                        val clip=ClipData.newPlainText("NPC",export())
-                        (ctx.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager).setPrimaryClip(clip)
-                    }
+        Box(Modifier.pointerInput(hasPrev, hasNext) {
+            var dragTotal = 0f
+            detectHorizontalDragGestures(
+                onDragStart = { dragTotal = 0f },
+                onDragEnd = {
+                    // Swipe right → previous, swipe left → next (threshold 80px)
+                    if (dragTotal > 80f && hasPrev) onPrev()
+                    else if (dragTotal < -80f && hasNext) onNext()
                 }
-            })
+            ) { _, dragAmount -> dragTotal += dragAmount }
+        }) {
+            EntityHero(name=e.name.ifBlank{"NPC"},
+                subtitle=listOf(e.role,e.major).filter{it.isNotBlank()}.joinToString(" · "),
+                firstPhoto=npc.photoUris.firstOrNull(),accent=LocalAccent.current,onBack=onBack,
+                focal=e.heroFocal, onFocalChange={ e=e.copy(heroFocal=it) },
+                onTapPhoto=if(npc.photoUris.isNotEmpty()){{heroViewer=true}}else null,
+                action={
+                    Row(verticalAlignment=Alignment.CenterVertically){
+                        IconButton(onClick={ readMode = !readMode }){
+                            Icon(if(readMode) Icons.Default.Edit else Icons.Default.MenuBook,
+                                if(readMode) "Mode édition" else "Mode lecture",
+                                Modifier.size(18.dp), tint=if(readMode) GOLD_HI else T1)
+                        }
+                        CopyButton{
+                            val clip=ClipData.newPlainText("NPC",export())
+                            (ctx.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager).setPrimaryClip(clip)
+                        }
+                    }
+                })
+            // Discreet prev/next arrows, vertically centred on the hero edges
+            if (hasPrev) {
+                Box(Modifier.align(Alignment.CenterStart).padding(start=6.dp)
+                    .size(34.dp).clip(CircleShape).background(L0.copy(alpha=0.42f))
+                    .clickable{ onPrev() }, contentAlignment=Alignment.Center){
+                    Icon(Icons.Default.ChevronLeft, "Personnage précédent", Modifier.size(22.dp), tint=T1)
+                }
+            }
+            if (hasNext) {
+                Box(Modifier.align(Alignment.CenterEnd).padding(end=6.dp)
+                    .size(34.dp).clip(CircleShape).background(L0.copy(alpha=0.42f))
+                    .clickable{ onNext() }, contentAlignment=Alignment.Center){
+                    Icon(Icons.Default.ChevronRight, "Personnage suivant", Modifier.size(22.dp), tint=T1)
+                }
+            }
+        }
 
         val (riseA, riseY) = rememberRiseIn()
         CompositionLocalProvider(LocalReadMode provides readMode) {
