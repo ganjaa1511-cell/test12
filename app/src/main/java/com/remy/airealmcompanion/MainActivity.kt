@@ -3349,7 +3349,6 @@ fun formatNoteDate(millis: Long): String {
     }
 }
 
-@Composable
 private val eventDateFmt = SimpleDateFormat("EEE d MMM · HH:mm", Locale.FRENCH)
 /** "À venir" / "Aujourd'hui" / "Passé" tag for an event date. */
 private fun eventWhenLabel(whenMs: Long?): Pair<String, Boolean> {
