@@ -191,6 +191,42 @@ data class JournalEntry(
     val text: String = ""
 )
 
+/** A dated note about a scene involving a specific NPC (mini-journal per fiche). */
+data class SceneNote(
+    val id: String = UUID.randomUUID().toString(),
+    val dateMillis: Long = System.currentTimeMillis(),
+    val text: String = ""
+)
+
+/** An upcoming event extracted from a journal entry (e.g. "Kappa Sig BBQ — Fri 5 Sep, 21:00"). */
+data class CampaignEvent(
+    val id: String = UUID.randomUUID().toString(),
+    val label: String = "",            // event description
+    val whenMillis: Long? = null,      // computed absolute date, null if undatable
+    val rawWhen: String = "",          // original "Fri 9 PM" text
+    val done: Boolean = false
+)
+fun CampaignEvent.toJson() = JSONObject().apply {
+    put("id", id); put("label", label)
+    if (whenMillis != null) put("whenMillis", whenMillis) else put("whenMillis", JSONObject.NULL)
+    put("rawWhen", rawWhen); put("done", done)
+}
+fun JSONObject.toCampaignEvent() = CampaignEvent(
+    id = optString("id", UUID.randomUUID().toString()),
+    label = optString("label", ""),
+    whenMillis = if (isNull("whenMillis")) null else optLong("whenMillis", 0L).takeIf { it != 0L },
+    rawWhen = optString("rawWhen", ""),
+    done = optBoolean("done", false)
+)
+fun SceneNote.toJson() = JSONObject().apply {
+    put("id", id); put("dateMillis", dateMillis); put("text", text)
+}
+fun JSONObject.toSceneNote() = SceneNote(
+    id = optString("id", UUID.randomUUID().toString()),
+    dateMillis = optLong("dateMillis", System.currentTimeMillis()),
+    text = optString("text", "")
+)
+
 data class Campaign(
     val id: String = UUID.randomUUID().toString(),
     val name: String, val description: String = "",
@@ -202,7 +238,8 @@ data class Campaign(
     val journal: List<JournalEntry> = emptyList(),
     val theme: String = "default",
     val gauges: List<Gauge> = emptyList(),  // custom per-campaign stat gauges
-    val accentColor: Int = -1               // -1 = terracotta défaut, sinon index dans LABEL_COLORS
+    val accentColor: Int = -1,              // -1 = terracotta défaut, sinon index dans LABEL_COLORS
+    val events: List<CampaignEvent> = emptyList()  // événements à venir extraits du journal
 )
 
 /** Resolve a campaign's signature accent colour (falls back to the default copper/terracotta). */
@@ -258,7 +295,8 @@ data class Npc(
     val gaugeValues: Map<String,String> = emptyMap(),  // gaugeId → value (text level or number)
     val sections: Map<String,String> = emptyMap(),     // free-form parsed sections (title → content), any format
     val pinned: Boolean = false,                       // épinglé en haut de liste
-    val collapsedSections: Set<String> = emptySet()    // titres des sections repliées (mémorisé par fiche)
+    val collapsedSections: Set<String> = emptySet(),   // titres des sections repliées (mémorisé par fiche)
+    val sceneNotes: List<SceneNote> = emptyList()      // mini-journal daté propre à ce perso
 )
 
 /** Canonical Airealm DNA / INERTIA field keys, in display order. */
@@ -460,6 +498,9 @@ private fun JSONObject.toCampaign(): Campaign {
         id = id, name = optString("name",""), description = optString("description",""),
         theme = optString("theme","default"),
         accentColor = optInt("accentColor", -1),
+        events = (optJSONArray("events") ?: JSONArray()).let { a ->
+            buildList { for (i in 0 until a.length()) add(a.getJSONObject(i).toCampaignEvent()) }
+        },
         gauges = (optJSONArray("gauges") ?: JSONArray()).let { a ->
             buildList { for (i in 0 until a.length()) add(a.getJSONObject(i).toGauge()) }
         },
@@ -508,6 +549,9 @@ private fun JSONObject.toNpc(fb: String) = Npc(
     pinned = optBoolean("pinned", false),
     collapsedSections = (optJSONArray("collapsedSections") ?: JSONArray()).let { a ->
         buildSet { for (i in 0 until a.length()) add(a.getString(i)) }
+    },
+    sceneNotes = (optJSONArray("sceneNotes") ?: JSONArray()).let { a ->
+        buildList { for (i in 0 until a.length()) add(a.getJSONObject(i).toSceneNote()) }
     },
     dna = (optJSONObject("dna") ?: JSONObject()).let { o ->
         buildMap { o.keys().forEach { k -> put(k, o.optString(k,"")) } }
@@ -564,6 +608,7 @@ private fun JSONObject.toGauge() = Gauge(
 private fun Campaign.toJson() = JSONObject().apply {
     put("id",id); put("name",name); put("description",description); put("theme",theme)
     put("accentColor", accentColor)
+    put("events", JSONArray().also { a -> events.forEach { a.put(it.toJson()) } })
     photoUri?.let { put("photoUri", it) }
     put("labels", JSONArray().also { a -> labels.forEach { a.put(it.toJson()) } })
     put("npcs",   JSONArray().also { a -> npcs.forEach     { a.put(it.toJson()) } })
@@ -592,6 +637,7 @@ private fun Npc.toJson() = JSONObject().apply {
     put("relationships",relationships); put("secrets",secrets)
     put("sceneHistory",sceneHistory); put("tags",tags); put("pinned",pinned)
     put("collapsedSections", JSONArray().also { a -> collapsedSections.forEach { a.put(it) } })
+    put("sceneNotes", JSONArray().also { a -> sceneNotes.forEach { a.put(it.toJson()) } })
     put("dna", JSONObject().also { o -> dna.forEach { (k,v) -> o.put(k,v) } })
     put("gaugeValues", JSONObject().also { o -> gaugeValues.forEach { (k,v) -> o.put(k,v) } })
     put("sections", JSONArray().also { a -> sections.forEach { (t,c) -> a.put(JSONObject().put("t",t).put("c",c)) } })
@@ -678,6 +724,7 @@ sealed class Screen {
     data class NpcDetail(val campaignId: String, val npcId: String) : Screen()
     data class LocDetail(val campaignId: String, val locId: String) : Screen()
     data class Relations(val campaignId: String) : Screen()
+    data class Timeline(val campaignId: String) : Screen()
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -706,6 +753,7 @@ fun CompanionApp() {
             is Screen.NpcDetail -> Screen.Campaign(s.campaignId)
             is Screen.LocDetail -> Screen.Campaign(s.campaignId)
             is Screen.Relations -> Screen.Campaign(s.campaignId)
+            is Screen.Timeline -> Screen.Campaign(s.campaignId)
             else -> Screen.Campaigns
         }
     }
@@ -743,6 +791,7 @@ fun CompanionApp() {
         is Screen.NpcDetail -> s.campaignId
         is Screen.LocDetail -> s.campaignId
         is Screen.Relations -> s.campaignId
+        is Screen.Timeline -> s.campaignId
         else -> null
     }
     LaunchedEffect(activeCampaignId, campaigns) {
@@ -780,6 +829,7 @@ fun CompanionApp() {
                 CampaignDetailScreen(c,
                     onBack       = { screen = Screen.Campaigns },
                     onOpenRelations = { screen = Screen.Relations(c.id) },
+                    onOpenTimeline = { screen = Screen.Timeline(c.id) },
                     onOpenNpc    = { screen = Screen.NpcDetail(c.id, it.id) },
                     onOpenLoc    = { screen = Screen.LocDetail(c.id, it.id) },
                     onAddNpc     = { n -> val x=Npc(campaignId=c.id,name=n.ifBlank{"Nouveau NPC"}); persist(campaigns.map{if(it.id==c.id)it.copy(npcs=it.npcs+x)else it}) },
@@ -828,7 +878,41 @@ fun CompanionApp() {
                     onDelGalleryPhoto = { gp -> PhotoStore.delete(gp.path); persist(campaigns.map{if(it.id==c.id)it.copy(gallery=it.gallery.filter{g->g.id!=gp.id})else it}) },
                     onAddJournal    = { entry -> persist(campaigns.map{if(it.id==c.id)it.copy(journal=listOf(entry)+it.journal)else it}) },
                     onUpdateJournal = { entry -> persist(campaigns.map{if(it.id==c.id)it.copy(journal=it.journal.map{j->if(j.id==entry.id)entry else j})else it}) },
-                    onDelJournal    = { entry -> persist(campaigns.map{if(it.id==c.id)it.copy(journal=it.journal.filter{j->j.id!=entry.id})else it}) }
+                    onDelJournal    = { entry -> persist(campaigns.map{if(it.id==c.id)it.copy(journal=it.journal.filter{j->j.id!=entry.id})else it}) },
+                    onLinkJournalToNpcs = { entry ->
+                        val blob = (entry.title + "\n" + entry.text)
+                        val mentioned = npcsMentionedIn(blob, c.npcs)
+                        // Note content = entry title (if any) + text
+                        val noteText = if (entry.title.isNotBlank()) "${entry.title}\n${entry.text}".trim() else entry.text.trim()
+                        var linkedCount = 0
+                        val updatedNpcs = c.npcs.map { npc ->
+                            if (mentioned.any { it.id == npc.id }) {
+                                // Anti-doublon : ne pas ré-ajouter si une note avec ce texte existe déjà
+                                val already = npc.sceneNotes.any { it.text.trim() == noteText }
+                                if (!already && noteText.isNotBlank()) {
+                                    linkedCount++
+                                    npc.copy(sceneNotes = npc.sceneNotes + SceneNote(dateMillis=entry.dateMillis, text=noteText))
+                                } else npc
+                            } else npc
+                        }
+                        if (linkedCount > 0)
+                            persist(campaigns.map{ if(it.id==c.id) it.copy(npcs=updatedNpcs) else it })
+                        linkedCount
+                    },
+                    onExtractEvents = { entry ->
+                        val blob = entry.title + "\n" + entry.text
+                        val sceneDate = parseSceneDate(blob) ?: entry.dateMillis
+                        val found = extractEvents(blob, sceneDate)
+                        // Anti-doublon : même label + même rawWhen
+                        val existing = c.events
+                        val fresh = found.filter { f -> existing.none { it.label == f.label && it.rawWhen == f.rawWhen } }
+                        if (fresh.isNotEmpty())
+                            persist(campaigns.map{ if(it.id==c.id) it.copy(events=it.events + fresh) else it })
+                        fresh.size
+                    },
+                    onDelEvent = { ev ->
+                        persist(campaigns.map{ if(it.id==c.id) it.copy(events=it.events.filter{e->e.id!=ev.id}) else it })
+                    }
                 )
             }
             is Screen.NpcDetail -> {
@@ -852,6 +936,12 @@ fun CompanionApp() {
             is Screen.Relations -> {
                 val c = campaigns.firstOrNull{it.id==s.campaignId} ?: run{screen=Screen.Campaigns;return@AnimatedContent}
                 RelationsScreen(c,
+                    onBack={screen=Screen.Campaign(s.campaignId)},
+                    onOpenNpc={npc->screen=Screen.NpcDetail(c.id,npc.id)})
+            }
+            is Screen.Timeline -> {
+                val c = campaigns.firstOrNull{it.id==s.campaignId} ?: run{screen=Screen.Campaigns;return@AnimatedContent}
+                TimelineScreen(c,
                     onBack={screen=Screen.Campaign(s.campaignId)},
                     onOpenNpc={npc->screen=Screen.NpcDetail(c.id,npc.id)})
             }
@@ -2084,12 +2174,16 @@ fun CampaignEditDialog(c: Campaign, onDismiss:()->Unit, onSave:(Campaign)->Unit)
 fun CampaignDetailScreen(
     c: Campaign, onBack:()->Unit,
     onOpenRelations:()->Unit = {},
+    onOpenTimeline:()->Unit = {},
     onOpenNpc:(Npc)->Unit, onOpenLoc:(Location)->Unit,
     onAddNpc:(String)->Unit, onDelNpc:(Npc)->Unit, onTogglePinNpc:(Npc)->Unit = {},
     onAddLoc:(String)->Unit, onDelLoc:(Location)->Unit,
     onUpdateLabels:(List<CampaignLabel>)->Unit,
     onImportNpc:(Npc)->Unit, onImportLoc:(Location)->Unit,
     onAddJournal:(JournalEntry)->Unit, onUpdateJournal:(JournalEntry)->Unit, onDelJournal:(JournalEntry)->Unit,
+    onLinkJournalToNpcs:(JournalEntry)->Int = { 0 },
+    onExtractEvents:(JournalEntry)->Int = { 0 },
+    onDelEvent:(CampaignEvent)->Unit = {},
     onAddGalleryPhoto:(Uri)->Unit, onUpdateCaption:(GalleryPhoto)->Unit, onDelGalleryPhoto:(GalleryPhoto)->Unit
 ) {
     val ctx = LocalContext.current
@@ -2154,6 +2248,11 @@ fun CampaignDetailScreen(
                         if (c.npcs.isNotEmpty())
                             IconButton(onClick=onOpenRelations){
                                 Icon(Icons.Default.Diversity3,"Tableau des relations",tint=T3,modifier=Modifier.size(20.dp))
+                            }
+                        // Timeline of scenes
+                        if (c.npcs.any{it.sceneNotes.isNotEmpty()})
+                            IconButton(onClick=onOpenTimeline){
+                                Icon(Icons.Default.Timeline,"Fil des scènes",tint=T3,modifier=Modifier.size(20.dp))
                             }
                         // Import an Airealm NPC card
                         IconButton(onClick={showImport=true}){
@@ -2280,6 +2379,9 @@ fun CampaignDetailScreen(
                         bottomPad=pads.calculateBottomPadding(), listState=listStates[1])
                     2 -> JournalTab(c.journal,
                         onEdit={editJournal=it}, onDel=onDelJournal,
+                        onLinkToNpcs=onLinkJournalToNpcs,
+                        onExtractEvents=onExtractEvents,
+                        events=c.events, onDelEvent=onDelEvent,
                         bottomPad=pads.calculateBottomPadding())
                     3 -> GalleryTab(c.gallery,
                         onUpdateCaption=onUpdateCaption, onDel=onDelGalleryPhoto,
@@ -2783,6 +2885,70 @@ fun NpcScreen(
                     }
                 }
             }
+            // ── Notes de scène — mini-journal daté propre à ce perso ──────────
+            LoreSection("Notes de scène", Icons.Default.HistoryEdu, accent=GOLD,
+                expandedOverride=isExpanded("Notes de scène"), onExpandChange={setExpanded("Notes de scène",it)},
+                summary=if(e.sceneNotes.isEmpty()) "Consigne ce qui se passe avec ce perso"
+                        else "${e.sceneNotes.size} note${if(e.sceneNotes.size>1)"s" else ""}"){
+                if (!readMode) {
+                    var newNote by remember { mutableStateOf("") }
+                    Column(Modifier.fillMaxWidth().padding(horizontal=20.dp, vertical=8.dp)){
+                        OutlinedTextField(value=newNote, onValueChange={newNote=it},
+                            modifier=Modifier.fillMaxWidth(),
+                            placeholder={Text("Nouvelle note de scène…", color=T4,
+                                style=Typo.bodySmall.copy(fontStyle=FontStyle.Italic))},
+                            textStyle=Typo.bodyMedium.copy(color=T1), minLines=2,
+                            colors=OutlinedTextFieldDefaults.colors(focusedBorderColor=GOLD,
+                                unfocusedBorderColor=L6, focusedContainerColor=L4, unfocusedContainerColor=L4,
+                                cursorColor=GOLD))
+                        Spacer(Modifier.height(8.dp))
+                        Box(Modifier.align(Alignment.End).clip(RoundedCornerShape(10.dp))
+                            .background(if(newNote.isBlank()) L4 else GOLD.copy(alpha=0.2f))
+                            .border(1.dp, if(newNote.isBlank()) L5 else GOLD, RoundedCornerShape(10.dp))
+                            .clickable(enabled=newNote.isNotBlank()){
+                                if(newNote.isNotBlank()){
+                                    e = e.copy(sceneNotes = e.sceneNotes + SceneNote(text=newNote.trim()))
+                                    newNote = ""
+                                }
+                            }.padding(horizontal=14.dp, vertical=9.dp)){
+                            Row(verticalAlignment=Alignment.CenterVertically, horizontalArrangement=Arrangement.spacedBy(6.dp)){
+                                Icon(Icons.Default.Add, null, Modifier.size(16.dp), tint=if(newNote.isBlank()) T4 else GOLD)
+                                Text("Ajouter", style=Typo.labelLarge.copy(color=if(newNote.isBlank()) T4 else GOLD))
+                            }
+                        }
+                    }
+                }
+                // Timeline of notes — most recent first
+                if (e.sceneNotes.isEmpty() && readMode) {
+                    Text("Aucune note", style=Typo.bodySmall.copy(color=T4, fontStyle=FontStyle.Italic),
+                        modifier=Modifier.padding(horizontal=20.dp, vertical=8.dp))
+                }
+                e.sceneNotes.sortedByDescending{it.dateMillis}.forEach { note ->
+                    Row(Modifier.fillMaxWidth().padding(horizontal=20.dp, vertical=6.dp)){
+                        // timeline rail
+                        Column(horizontalAlignment=Alignment.CenterHorizontally, modifier=Modifier.padding(end=12.dp, top=4.dp)){
+                            Box(Modifier.size(8.dp).clip(CircleShape).background(GOLD))
+                            Box(Modifier.width(1.5.dp).height(36.dp).background(GOLD.copy(alpha=0.25f)))
+                        }
+                        Column(Modifier.weight(1f)){
+                            Row(verticalAlignment=Alignment.CenterVertically){
+                                Text(formatNoteDate(note.dateMillis),
+                                    style=Typo.labelSmall.copy(color=GOLD.copy(alpha=0.7f), letterSpacing=0.5.sp),
+                                    modifier=Modifier.weight(1f))
+                                if (!readMode) {
+                                    Box(Modifier.size(26.dp).clip(CircleShape).background(CRIM_LO)
+                                        .clickable{ e = e.copy(sceneNotes = e.sceneNotes.filter{it.id != note.id}) },
+                                        contentAlignment=Alignment.Center){
+                                        Icon(Icons.Default.Close, "Supprimer", Modifier.size(14.dp), tint=CRIM)
+                                    }
+                                }
+                            }
+                            Spacer(Modifier.height(3.dp))
+                            Text(note.text, style=Typo.bodyMedium.copy(color=T1, lineHeight=21.sp))
+                        }
+                    }
+                }
+            }
             LoreSection("Contexte",Icons.Default.Groups,
                 summary=if(e.relationships.isNotBlank())e.relationships.take(60) else "Aucune relation renseignée"){
                 LoreField("Relations",e.relationships,"Avec les PJ, autres NPCs, tensions…",multi=true){e=e.copy(relationships=it)}
@@ -3088,15 +3254,155 @@ fun LinkRow(name: String, sub: String, accent: Color, onClick: ()->Unit) {
 // JOURNAL
 // ─────────────────────────────────────────────────────────────────────────────
 
+/** Find NPCs whose name (full, first, or last) appears as a whole word in the given text. */
+fun npcsMentionedIn(text: String, npcs: List<Npc>): List<Npc> {
+    if (text.isBlank()) return emptyList()
+    val haystack = text.lowercase()
+    return npcs.filter { npc ->
+        val full = npc.name.trim().lowercase()
+        if (full.isBlank()) return@filter false
+        // Build candidate tokens: full name + each name part of length >= 3 (avoids "a", "de"…)
+        val parts = full.split(Regex("\\s+")).filter { it.length >= 3 }
+        val candidates = (listOf(full) + parts).distinct()
+        candidates.any { cand ->
+            // whole-word match using boundaries that respect letters/accents
+            Regex("(?<![\\p{L}])" + Regex.escape(cand) + "(?![\\p{L}])").containsMatchIn(haystack)
+        }
+    }
+}
+
+private val MONTH_MAP = mapOf(
+    "jan" to 0, "feb" to 1, "mar" to 2, "apr" to 3, "may" to 4, "jun" to 5,
+    "jul" to 6, "aug" to 7, "sep" to 8, "sept" to 8, "oct" to 9, "nov" to 10, "dec" to 11)
+private val WEEKDAY_MAP = mapOf(  // Calendar.DAY_OF_WEEK: Sunday=1 … Saturday=7
+    "sun" to 1, "mon" to 2, "tue" to 3, "wed" to 4, "thu" to 5, "fri" to 6, "sat" to 7)
+
+/** Parse an absolute scene date like "Sept 1, 2014" → millis at local midnight, or null. */
+fun parseSceneDate(text: String): Long? {
+    val m = Regex("\\b(jan|feb|mar|apr|may|jun|jul|aug|sept|sep|oct|nov|dec)[a-z]*\\.?\\s+(\\d{1,2}),?\\s+(\\d{4})\\b",
+        RegexOption.IGNORE_CASE).find(text) ?: return null
+    val mon = MONTH_MAP[m.groupValues[1].lowercase().let { if (it.startsWith("sept")) "sept" else it.take(3) }] ?: return null
+    val day = m.groupValues[2].toIntOrNull() ?: return null
+    val year = m.groupValues[3].toIntOrNull() ?: return null
+    return java.util.Calendar.getInstance().apply {
+        clear(); set(year, mon, day, 0, 0, 0)
+    }.timeInMillis
+}
+
+/** Extract upcoming events (weekday+time, or relative "tomorrow") and compute absolute dates from a scene anchor. */
+fun extractEvents(text: String, sceneDate: Long?): List<CampaignEvent> {
+    val out = mutableListOf<CampaignEvent>()
+    // Weekday + time, e.g. "Fri 9 PM" or "Saturday 10:00 AM"
+    val wdRx = Regex("\\b(mon|tue|wed|thu|fri|sat|sun)[a-z]*\\.?\\s+(\\d{1,2})(?::(\\d{2}))?\\s*([ap]m)\\b",
+        RegexOption.IGNORE_CASE)
+    for (m in wdRx.findAll(text)) {
+        val wd = WEEKDAY_MAP[m.groupValues[1].lowercase().take(3)] ?: continue
+        var h = m.groupValues[2].toIntOrNull() ?: continue
+        val mn = m.groupValues[3].toIntOrNull() ?: 0
+        val ap = m.groupValues[4].lowercase()
+        if (ap == "pm" && h < 12) h += 12
+        if (ap == "am" && h == 12) h = 0
+        val whenMs = sceneDate?.let { anchor ->
+            val cal = java.util.Calendar.getInstance().apply { timeInMillis = anchor }
+            val cur = cal.get(java.util.Calendar.DAY_OF_WEEK)
+            var diff = (wd - cur + 7) % 7
+            if (diff == 0) diff = 7  // next occurrence, not the scene day itself
+            cal.add(java.util.Calendar.DAY_OF_MONTH, diff)
+            cal.set(java.util.Calendar.HOUR_OF_DAY, h); cal.set(java.util.Calendar.MINUTE, mn)
+            cal.set(java.util.Calendar.SECOND, 0)
+            cal.timeInMillis
+        }
+        // Context: take up to 40 chars before the match as the label
+        val start = m.range.first
+        val ctx = text.substring(maxOf(0, start - 42), start).trimEnd().substringAfterLast(". ").trim()
+        val label = ctx.ifBlank { "Événement" }.removePrefix("(").trim()
+        out.add(CampaignEvent(label=label, whenMillis=whenMs, rawWhen=m.value.trim()))
+    }
+    // Relative: tomorrow / tonight
+    val relRx = Regex("\\b(tomorrow|tonight)\\b", RegexOption.IGNORE_CASE)
+    for (m in relRx.findAll(text)) {
+        val whenMs = sceneDate?.let { anchor ->
+            val cal = java.util.Calendar.getInstance().apply { timeInMillis = anchor }
+            if (m.groupValues[1].lowercase() == "tomorrow") cal.add(java.util.Calendar.DAY_OF_MONTH, 1)
+            cal.timeInMillis
+        }
+        val start = m.range.first
+        val ctx = text.substring(maxOf(0, start - 42), start).trimEnd().substringAfterLast(". ").trim()
+        out.add(CampaignEvent(label=ctx.ifBlank{"Événement"}, whenMillis=whenMs, rawWhen=m.value.trim()))
+    }
+    return out
+}
+
 private val journalDateFmt = SimpleDateFormat("d MMMM yyyy", Locale.FRENCH)
+private val noteTimeFmt = SimpleDateFormat("HH:mm", Locale.FRENCH)
+private val noteDayFmt = SimpleDateFormat("d MMM yyyy", Locale.FRENCH)
+/** Friendly date for scene notes: "Aujourd'hui · 14:30", "Hier · 09:15", or "3 janv. 2026 · 20:05". */
+fun formatNoteDate(millis: Long): String {
+    val now = System.currentTimeMillis()
+    val dayMs = 86_400_000L
+    val startOfToday = now - (now % dayMs)
+    val time = noteTimeFmt.format(Date(millis))
+    return when {
+        millis >= startOfToday -> "Aujourd'hui · $time"
+        millis >= startOfToday - dayMs -> "Hier · $time"
+        else -> "${noteDayFmt.format(Date(millis))} · $time"
+    }
+}
 
 @Composable
-fun JournalTab(entries: List<JournalEntry>, onEdit:(JournalEntry)->Unit, onDel:(JournalEntry)->Unit, bottomPad: Dp) {
+private val eventDateFmt = SimpleDateFormat("EEE d MMM · HH:mm", Locale.FRENCH)
+/** "À venir" / "Aujourd'hui" / "Passé" tag for an event date. */
+private fun eventWhenLabel(whenMs: Long?): Pair<String, Boolean> {
+    if (whenMs == null) return ("Date inconnue" to false)
+    val now = System.currentTimeMillis()
+    val past = whenMs < now - 3_600_000L  // 1h grace
+    return (eventDateFmt.format(Date(whenMs)).replaceFirstChar{it.uppercase()} to past)
+}
+
+@Composable
+fun EventsSection(events: List<CampaignEvent>, onDelEvent:(CampaignEvent)->Unit, modifier: Modifier = Modifier) {
+    val sorted = events.sortedWith(compareBy(nullsLast()) { it.whenMillis })
+    Column(modifier.fillMaxWidth().padding(horizontal=14.dp).padding(bottom=6.dp)
+        .clip(RoundedCornerShape(14.dp)).background(L2)
+        .border(1.dp, TEAL.copy(alpha=0.25f), RoundedCornerShape(14.dp))
+        .padding(14.dp)) {
+        Row(verticalAlignment=Alignment.CenterVertically, horizontalArrangement=Arrangement.spacedBy(8.dp)) {
+            Icon(Icons.Default.EventNote, null, Modifier.size(16.dp), tint=TEAL)
+            Text("ÉVÉNEMENTS À VENIR", style=Typo.labelMedium.copy(color=TEAL, letterSpacing=1.2.sp))
+        }
+        Spacer(Modifier.height(10.dp))
+        sorted.forEach { ev ->
+            val (whenText, past) = eventWhenLabel(ev.whenMillis)
+            Row(Modifier.fillMaxWidth().padding(vertical=6.dp), verticalAlignment=Alignment.CenterVertically) {
+                Box(Modifier.size(7.dp).clip(CircleShape)
+                    .background(if(past) T4 else TEAL))
+                Spacer(Modifier.width(10.dp))
+                Column(Modifier.weight(1f)) {
+                    Text(ev.label.ifBlank{"Événement"},
+                        style=Typo.bodyMedium.copy(color=if(past) T3 else T1),
+                        maxLines=2, overflow=TextOverflow.Ellipsis)
+                    Text(whenText + if(ev.rawWhen.isNotBlank()) "  ·  ${ev.rawWhen}" else "",
+                        style=Typo.labelSmall.copy(color=if(past) T4 else TEAL.copy(alpha=0.8f), letterSpacing=0.3.sp),
+                        modifier=Modifier.padding(top=2.dp))
+                }
+                Box(Modifier.size(28.dp).clip(CircleShape).background(CRIM_LO)
+                    .clickable{ onDelEvent(ev) }, contentAlignment=Alignment.Center) {
+                    Icon(Icons.Default.Close, "Supprimer", Modifier.size(14.dp), tint=CRIM)
+                }
+            }
+        }
+    }
+}
+
+@Composable
+fun JournalTab(entries: List<JournalEntry>, onEdit:(JournalEntry)->Unit, onDel:(JournalEntry)->Unit,
+    onLinkToNpcs:(JournalEntry)->Int = { 0 }, onExtractEvents:(JournalEntry)->Int = { 0 },
+    events: List<CampaignEvent> = emptyList(), onDelEvent:(CampaignEvent)->Unit = {}, bottomPad: Dp) {
     var delTarget by remember { mutableStateOf<JournalEntry?>(null) }
     delTarget?.let { j -> ConfirmDelete("Supprimer ?","Cette entrée du journal sera supprimée.",
         {onDel(j);delTarget=null},{delTarget=null}) }
 
-    if (entries.isEmpty()) {
+    if (entries.isEmpty() && events.isEmpty()) {
         Box(Modifier.fillMaxSize(), contentAlignment=Alignment.Center) {
             Column(horizontalAlignment=Alignment.CenterHorizontally, verticalArrangement=Arrangement.spacedBy(8.dp)) {
                 Ornament(GOLD_MID)
@@ -3111,8 +3417,14 @@ fun JournalTab(entries: List<JournalEntry>, onEdit:(JournalEntry)->Unit, onDel:(
     LazyColumn(Modifier.fillMaxSize(),
         contentPadding=PaddingValues(top=10.dp, bottom=bottomPad+104.dp),
         verticalArrangement=Arrangement.spacedBy(8.dp)) {
+        if (events.isNotEmpty()) {
+            item(key="__events__") {
+                EventsSection(events, onDelEvent, Modifier.animateItem())
+            }
+        }
         items(entries.sortedByDescending{it.dateMillis}, key={it.id}) { j ->
             JournalCard(j, onEdit={onEdit(j)}, onDelete={delTarget=j},
+                onLinkToNpcs={onLinkToNpcs(j)}, onExtractEvents={onExtractEvents(j)},
                 modifier=Modifier.animateItem())
         }
     }
@@ -3598,7 +3910,8 @@ fun ImportSheet(onDismiss: ()->Unit, onImport: (Npc)->Unit, onImportLoc: ((Locat
 // ─────────────────────────────────────────────────────────────────────────────
 
 @Composable
-fun JournalCard(j: JournalEntry, onEdit: ()->Unit, onDelete: ()->Unit, modifier: Modifier = Modifier) {
+fun JournalCard(j: JournalEntry, onEdit: ()->Unit, onDelete: ()->Unit,
+    onLinkToNpcs: ()->Int = { 0 }, onExtractEvents: ()->Int = { 0 }, modifier: Modifier = Modifier) {
     var expanded by remember { mutableStateOf(false) }
     val haptic = LocalHapticFeedback.current
     Column(modifier.fillMaxWidth().padding(horizontal=14.dp)
@@ -3637,7 +3950,34 @@ fun JournalCard(j: JournalEntry, onEdit: ()->Unit, onDelete: ()->Unit, modifier:
                 if (j.text.isNotBlank())
                     Text(j.text, style=Typo.bodyMedium.copy(color=T2),
                         modifier=Modifier.padding(top=12.dp))
-                Row(Modifier.fillMaxWidth().padding(top=12.dp),
+                // Lier la scène aux persos cités dans le texte
+                OutlinedButton(onClick={
+                        val count = onLinkToNpcs()
+                        Notice.show(when {
+                            count == 0 -> "Aucun nouveau perso à lier (déjà fait ou non détecté)"
+                            count == 1 -> "Scène ajoutée à 1 personnage"
+                            else -> "Scène ajoutée à $count personnages"
+                        })
+                    }, modifier=Modifier.fillMaxWidth().padding(top=12.dp),
+                    border=BorderStroke(1.dp, GOLD.copy(alpha=0.45f)), shape=RoundedCornerShape(10.dp),
+                    colors=ButtonDefaults.outlinedButtonColors(contentColor=GOLD)) {
+                    Icon(Icons.Default.GroupAdd, null, Modifier.size(15.dp))
+                    Spacer(Modifier.width(6.dp)); Text("Lier aux persos cités", style=Typo.bodySmall)
+                }
+                OutlinedButton(onClick={
+                        val count = onExtractEvents()
+                        Notice.show(when {
+                            count == 0 -> "Aucun nouvel événement détecté"
+                            count == 1 -> "1 événement ajouté à l'agenda"
+                            else -> "$count événements ajoutés à l'agenda"
+                        })
+                    }, modifier=Modifier.fillMaxWidth().padding(top=8.dp),
+                    border=BorderStroke(1.dp, TEAL.copy(alpha=0.45f)), shape=RoundedCornerShape(10.dp),
+                    colors=ButtonDefaults.outlinedButtonColors(contentColor=TEAL)) {
+                    Icon(Icons.Default.EventNote, null, Modifier.size(15.dp))
+                    Spacer(Modifier.width(6.dp)); Text("Extraire les événements", style=Typo.bodySmall)
+                }
+                Row(Modifier.fillMaxWidth().padding(top=8.dp),
                     horizontalArrangement=Arrangement.spacedBy(8.dp)) {
                     OutlinedButton(onClick=onEdit, modifier=Modifier.weight(1f),
                         border=BorderStroke(1.dp, L6), shape=RoundedCornerShape(10.dp),
@@ -4322,9 +4662,19 @@ fun RelationsScreen(c: Campaign, onBack: ()->Unit, onOpenNpc: (Npc)->Unit) {
         val pos = facets.filter { f -> positiveFacets.any { f.first.contains(it, true) } }
         return if (pos.isEmpty()) 0f else pos.map { it.third }.average().toFloat()
     }
-    val withFacets = c.npcs.map { it to parseFacets(it.dna["Facets"] ?: "") }
+    fun tension(facets: List<Triple<String,String,Float>>): Float =
+        facets.filter { f -> listOf("Suspicion","Jealousy").any { f.first.contains(it, true) } }
+            .map { it.third }.maxOrNull() ?: 0f
+    val withFacetsAll = c.npcs.map { it to parseFacets(it.dna["Facets"] ?: "") }
         .filter { it.second.isNotEmpty() || it.first.gaugeValues.isNotEmpty() }
         .sortedByDescending { closeness(it.second) }  // strongest relationships first
+    var relFilter by remember { mutableStateOf(0) }  // 0=Tout 1=Proches 2=Liés 3=Tendus
+    val withFacets = when (relFilter) {
+        1 -> withFacetsAll.filter { closeness(it.second) >= 0.66f }
+        2 -> withFacetsAll.filter { closeness(it.second) >= 0.40f }
+        3 -> withFacetsAll.filter { tension(it.second) >= 0.6f }
+        else -> withFacetsAll
+    }
     Column(Modifier.fillMaxSize().imePadding()) {
         // header
         Row(Modifier.fillMaxWidth().statusBarsPadding().padding(start=8.dp,end=16.dp,top=8.dp,bottom=8.dp),
@@ -4340,13 +4690,11 @@ fun RelationsScreen(c: Campaign, onBack: ()->Unit, onOpenNpc: (Npc)->Unit) {
         Column(Modifier.padding(start=20.dp,end=20.dp,bottom=12.dp)){
             Text("RELATIONS",style=Typo.labelLarge.copy(color=GOLD_MID))
             Text("Tableau social",style=Typo.headlineLarge.copy(color=T1))
-            // Mini-résumé : compte relations / proches / tendues
-            if (withFacets.isNotEmpty()) {
-                val total = withFacets.size
-                val close = withFacets.count { closeness(it.second) >= 0.66f }
-                val tense = withFacets.count { (it.first.let { n -> parseFacets(n.dna["Facets"] ?: "") }
-                    .filter { f -> listOf("Suspicion","Jealousy").any { f.first.contains(it, true) } }
-                    .map { it.third }.maxOrNull() ?: 0f) >= 0.6f }
+            // Mini-résumé : compte relations / proches / tendues (sur l'ensemble)
+            if (withFacetsAll.isNotEmpty()) {
+                val total = withFacetsAll.size
+                val close = withFacetsAll.count { closeness(it.second) >= 0.66f }
+                val tense = withFacetsAll.count { tension(it.second) >= 0.6f }
                 val parts = buildList {
                     add("$total relation${if(total>1)"s" else ""}")
                     if (close > 0) add("$close proche${if(close>1)"s" else ""}")
@@ -4357,14 +4705,40 @@ fun RelationsScreen(c: Campaign, onBack: ()->Unit, onOpenNpc: (Npc)->Unit) {
                     modifier=Modifier.padding(top=6.dp))
             }
         }
+        // Filtres par type de lien
+        if (withFacetsAll.isNotEmpty()) {
+            Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState())
+                .padding(start=20.dp,end=20.dp,bottom=10.dp),
+                horizontalArrangement=Arrangement.spacedBy(8.dp)){
+                listOf("Tout" to 0, "Proches" to 1, "Liés" to 2, "Tendus" to 3).forEach { (lab, idx) ->
+                    val sel = relFilter == idx
+                    val chipCol = when(idx){ 1->Color(0xFF5FB89A); 3->CRIM; else->GOLD }
+                    Box(Modifier.clip(RoundedCornerShape(999.dp))
+                        .background(if(sel) chipCol.copy(alpha=0.18f) else L2)
+                        .border(1.dp, if(sel) chipCol.copy(alpha=0.6f) else L5, RoundedCornerShape(999.dp))
+                        .clickable{ relFilter = idx }
+                        .padding(horizontal=16.dp, vertical=8.dp)){
+                        Text(lab, style=Typo.labelMedium.copy(
+                            color=if(sel) chipCol else T2,
+                            fontWeight=if(sel) FontWeight.SemiBold else FontWeight.Normal))
+                    }
+                }
+            }
+        }
         if (withFacets.isEmpty()) {
             Box(Modifier.fillMaxSize(),contentAlignment=Alignment.Center){
                 Column(horizontalAlignment=Alignment.CenterHorizontally){
                     Icon(Icons.Default.Diversity3,null,Modifier.size(40.dp),tint=T4)
                     Spacer(Modifier.height(10.dp))
-                    Text("Aucune relation renseignée",style=Typo.bodyMedium.copy(color=T3))
-                    Text("Les Facets et jauges des personnages s'affichent ici.",
-                        style=Typo.bodySmall.copy(color=T4),modifier=Modifier.padding(top=4.dp))
+                    if (relFilter != 0 && withFacetsAll.isNotEmpty()) {
+                        Text("Aucun perso dans ce filtre",style=Typo.bodyMedium.copy(color=T3))
+                        Text("Essaie un autre filtre relationnel.",
+                            style=Typo.bodySmall.copy(color=T4),modifier=Modifier.padding(top=4.dp))
+                    } else {
+                        Text("Aucune relation renseignée",style=Typo.bodyMedium.copy(color=T3))
+                        Text("Les Facets et jauges des personnages s'affichent ici.",
+                            style=Typo.bodySmall.copy(color=T4),modifier=Modifier.padding(top=4.dp))
+                    }
                 }
             }
         } else {
@@ -4437,6 +4811,112 @@ fun RelationsScreen(c: Campaign, onBack: ()->Unit, onOpenNpc: (Npc)->Unit) {
     }
 }
 
+
+// ─────────────────────────────────────────────────────────────────────────────
+// TIMELINE — all scene notes across every NPC, in one chronological view
+// ─────────────────────────────────────────────────────────────────────────────
+
+private val timelineDateFmt = SimpleDateFormat("EEEE d MMMM yyyy", Locale.FRENCH)
+
+@Composable
+fun TimelineScreen(c: Campaign, onBack: ()->Unit, onOpenNpc: (Npc)->Unit) {
+    // Flatten every scene note, tagging it with its NPC
+    data class TLItem(val npc: Npc, val note: SceneNote)
+    val allNotes = c.npcs.flatMap { npc -> npc.sceneNotes.map { TLItem(npc, it) } }
+        .sortedByDescending { it.note.dateMillis }
+    // Group by calendar day for section headers
+    val grouped = allNotes.groupBy {
+        val cal = java.util.Calendar.getInstance().apply { timeInMillis = it.note.dateMillis }
+        cal.set(java.util.Calendar.HOUR_OF_DAY, 0); cal.set(java.util.Calendar.MINUTE, 0)
+        cal.set(java.util.Calendar.SECOND, 0); cal.set(java.util.Calendar.MILLISECOND, 0)
+        cal.timeInMillis
+    }
+
+    Column(Modifier.fillMaxSize().imePadding()) {
+        // header
+        Row(Modifier.fillMaxWidth().statusBarsPadding().padding(start=8.dp,end=16.dp,top=8.dp,bottom=8.dp),
+            verticalAlignment=Alignment.CenterVertically){
+            Box(Modifier.clip(RoundedCornerShape(999.dp)).background(L2)
+                .pressable(onClickLabel="Retour"){onBack()}.padding(horizontal=14.dp,vertical=8.dp)){
+                Row(verticalAlignment=Alignment.CenterVertically,horizontalArrangement=Arrangement.spacedBy(6.dp)){
+                    Icon(Icons.Default.ArrowBack,null,Modifier.size(18.dp),tint=GOLD)
+                    Text("Retour",style=Typo.labelLarge.copy(color=T1))
+                }
+            }
+        }
+        Column(Modifier.padding(start=20.dp,end=20.dp,bottom=12.dp)){
+            Text("CHRONOLOGIE",style=Typo.labelLarge.copy(color=GOLD_MID))
+            Text("Fil des scènes",style=Typo.headlineLarge.copy(color=T1))
+            if (allNotes.isNotEmpty())
+                Text("${allNotes.size} note${if(allNotes.size>1)"s" else ""} · ${c.npcs.count{it.sceneNotes.isNotEmpty()}} perso${if(c.npcs.count{it.sceneNotes.isNotEmpty()}>1)"s" else ""}",
+                    style=Typo.labelMedium.copy(color=T3, letterSpacing=0.5.sp),
+                    modifier=Modifier.padding(top=6.dp))
+        }
+        if (allNotes.isEmpty()) {
+            Box(Modifier.fillMaxSize(),contentAlignment=Alignment.Center){
+                Column(horizontalAlignment=Alignment.CenterHorizontally){
+                    Icon(Icons.Default.Timeline,null,Modifier.size(40.dp),tint=T4)
+                    Spacer(Modifier.height(10.dp))
+                    Text("Aucune scène consignée",style=Typo.bodyMedium.copy(color=T3))
+                    Text("Ajoute des notes de scène sur les fiches, ou lie tes entrées de journal.",
+                        style=Typo.bodySmall.copy(color=T4),
+                        textAlign=TextAlign.Center,
+                        modifier=Modifier.padding(top=4.dp, start=40.dp, end=40.dp))
+                }
+            }
+        } else {
+            LazyColumn(Modifier.fillMaxSize(),
+                contentPadding=PaddingValues(start=16.dp,end=16.dp,bottom=40.dp),
+                verticalArrangement=Arrangement.spacedBy(4.dp)){
+                grouped.forEach { (dayMs, items) ->
+                    item(key="day_$dayMs") {
+                        Text(timelineDateFmt.format(Date(dayMs)).replaceFirstChar{it.uppercase()},
+                            style=Typo.labelMedium.copy(color=GOLD_MID, letterSpacing=0.8.sp),
+                            modifier=Modifier.padding(top=14.dp, bottom=6.dp, start=4.dp))
+                    }
+                    items(items, key={ it.note.id }) { tl ->
+                        val seal = sealHue(tl.npc.name)
+                        Row(Modifier.fillMaxWidth().padding(vertical=4.dp)) {
+                            // timeline rail with avatar
+                            Column(horizontalAlignment=Alignment.CenterHorizontally,
+                                modifier=Modifier.padding(end=12.dp)) {
+                                Box(Modifier.size(38.dp).clip(CircleShape)
+                                    .background(nameGrad(tl.npc.name))
+                                    .border(1.5.dp, seal.copy(alpha=0.5f), CircleShape)
+                                    .pressable(onClickLabel="Ouvrir ${tl.npc.name}"){onOpenNpc(tl.npc)},
+                                    contentAlignment=Alignment.Center){
+                                    if(tl.npc.photoUris.isNotEmpty())
+                                        AsyncImage(model=ImageRequest.Builder(LocalContext.current).data(File(tl.npc.photoUris.first())).crossfade(true).build(),
+                                            contentDescription=null,contentScale=ContentScale.Crop,modifier=Modifier.fillMaxSize())
+                                    else Text(tl.npc.name.take(1).uppercase(),
+                                        style=Typo.titleMedium.copy(color=seal, fontWeight=FontWeight.SemiBold))
+                                }
+                                Box(Modifier.width(1.5.dp).weight(1f).heightIn(min=12.dp)
+                                    .background(GOLD.copy(alpha=0.18f)))
+                            }
+                            // note card
+                            Column(Modifier.weight(1f)
+                                .clip(RoundedCornerShape(14.dp)).background(L2)
+                                .border(1.dp, L5.copy(alpha=0.5f), RoundedCornerShape(14.dp))
+                                .pressable(onClickLabel="Ouvrir ${tl.npc.name}"){onOpenNpc(tl.npc)}
+                                .padding(14.dp)) {
+                                Row(verticalAlignment=Alignment.CenterVertically) {
+                                    Text(tl.npc.name, style=Typo.titleMedium.copy(color=seal),
+                                        modifier=Modifier.weight(1f), maxLines=1, overflow=TextOverflow.Ellipsis)
+                                    Text(formatNoteDate(tl.note.dateMillis).substringAfter("· ").ifBlank{ formatNoteDate(tl.note.dateMillis) },
+                                        style=Typo.labelSmall.copy(color=T4))
+                                }
+                                Spacer(Modifier.height(5.dp))
+                                Text(tl.note.text, style=Typo.bodyMedium.copy(color=T1, lineHeight=21.sp),
+                                    maxLines=6, overflow=TextOverflow.Ellipsis)
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
 
 // ─────────────────────────────────────────────────────────────────────────────
 // GAUGE MANAGER — create/edit per-campaign custom gauges (stats)
