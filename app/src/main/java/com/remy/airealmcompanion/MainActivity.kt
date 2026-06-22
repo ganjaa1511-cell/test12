@@ -882,14 +882,19 @@ fun CompanionApp() {
                     onLinkJournalToNpcs = { entry ->
                         val blob = (entry.title + "\n" + entry.text)
                         val mentioned = npcsMentionedIn(blob, c.npcs)
-                        // Note content = entry title (if any) + text
-                        val noteText = if (entry.title.isNotBlank()) "${entry.title}\n${entry.text}".trim() else entry.text.trim()
+                        val sessionTitle = entry.title.ifBlank { "Session" }
                         var linkedCount = 0
                         val updatedNpcs = c.npcs.map { npc ->
                             if (mentioned.any { it.id == npc.id }) {
-                                // Anti-doublon : ne pas ré-ajouter si une note avec ce texte existe déjà
-                                val already = npc.sceneNotes.any { it.text.trim() == noteText }
-                                if (!already && noteText.isNotBlank()) {
+                                // Short, per-NPC note: "Présent dans : <titre>" + first sentence citing them
+                                val snippet = firstSentenceMentioning(entry.text, npc)
+                                val noteText = buildString {
+                                    append("Présent dans : ").append(sessionTitle)
+                                    if (snippet.isNotBlank()) append("\n").append(snippet)
+                                }
+                                // Anti-doublon : même titre de session déjà lié
+                                val already = npc.sceneNotes.any { it.text.startsWith("Présent dans : $sessionTitle") }
+                                if (!already) {
                                     linkedCount++
                                     npc.copy(sceneNotes = npc.sceneNotes + SceneNote(dateMillis=entry.dateMillis, text=noteText))
                                 } else npc
@@ -3254,6 +3259,24 @@ fun LinkRow(name: String, sub: String, accent: Color, onClick: ()->Unit) {
 // JOURNAL
 // ─────────────────────────────────────────────────────────────────────────────
 
+/** First sentence of [text] that mentions this NPC (by full/first/last name), trimmed to ~160 chars. */
+fun firstSentenceMentioning(text: String, npc: Npc): String {
+    if (text.isBlank()) return ""
+    val full = npc.name.trim().lowercase()
+    if (full.isBlank()) return ""
+    val cands = (listOf(full) + full.split(Regex("\\s+")).filter { it.length >= 3 }).distinct()
+    // Split into sentences on . ! ? while keeping it simple
+    val sentences = text.split(Regex("(?<=[.!?])\\s+"))
+    for (s in sentences) {
+        val low = s.lowercase()
+        if (cands.any { Regex("(?<![\\p{L}])" + Regex.escape(it) + "(?![\\p{L}])").containsMatchIn(low) }) {
+            val clean = s.trim()
+            return if (clean.length > 160) clean.take(157).trimEnd() + "…" else clean
+        }
+    }
+    return ""
+}
+
 /** Find NPCs whose name (full, first, or last) appears as a whole word in the given text. */
 fun npcsMentionedIn(text: String, npcs: List<Npc>): List<Npc> {
     if (text.isBlank()) return emptyList()
@@ -3290,6 +3313,22 @@ fun parseSceneDate(text: String): Long? {
 }
 
 /** Extract upcoming events (weekday+time, or relative "tomorrow") and compute absolute dates from a scene anchor. */
+/** Pull a clean event name from "Name (details, Fri 9 PM)" style text, given the time-match start. */
+fun cleanEventLabel(text: String, matchStart: Int): String {
+    val before = text.substring(0, matchStart)
+    val paren = before.lastIndexOf('(')
+    val namePart = if (paren != -1) text.substring(0, paren) else before
+    // Cut at the last clean delimiter: ". " / "; " / "| " / ": " / ") ," / ") and"
+    val parts = namePart.split(Regex("(?:[.;|:]\\s)|(?:\\)\\s*,?\\s*(?:and\\s+)?)|(?:,\\s(?=[A-Z][a-z]))"))
+    var name = parts.last().trim().trim('(', ')', ',').trim()
+    name = name.replace(Regex("^(and|the|a|an)\\s+", RegexOption.IGNORE_CASE), "").trim()
+    if (name.length > 45) {
+        val m = Regex("([A-Z][\\w&\\- ]{2,44})$").find(name)
+        if (m != null) name = m.groupValues[1].trim()
+    }
+    return name.ifBlank { "Événement" }
+}
+
 fun extractEvents(text: String, sceneDate: Long?): List<CampaignEvent> {
     val out = mutableListOf<CampaignEvent>()
     // Weekday + time, e.g. "Fri 9 PM" or "Saturday 10:00 AM"
@@ -3312,10 +3351,7 @@ fun extractEvents(text: String, sceneDate: Long?): List<CampaignEvent> {
             cal.set(java.util.Calendar.SECOND, 0)
             cal.timeInMillis
         }
-        // Context: take up to 40 chars before the match as the label
-        val start = m.range.first
-        val ctx = text.substring(maxOf(0, start - 42), start).trimEnd().substringAfterLast(". ").trim()
-        val label = ctx.ifBlank { "Événement" }.removePrefix("(").trim()
+        val label = cleanEventLabel(text, m.range.first)
         out.add(CampaignEvent(label=label, whenMillis=whenMs, rawWhen=m.value.trim()))
     }
     // Relative: tomorrow / tonight
@@ -3326,9 +3362,7 @@ fun extractEvents(text: String, sceneDate: Long?): List<CampaignEvent> {
             if (m.groupValues[1].lowercase() == "tomorrow") cal.add(java.util.Calendar.DAY_OF_MONTH, 1)
             cal.timeInMillis
         }
-        val start = m.range.first
-        val ctx = text.substring(maxOf(0, start - 42), start).trimEnd().substringAfterLast(". ").trim()
-        out.add(CampaignEvent(label=ctx.ifBlank{"Événement"}, whenMillis=whenMs, rawWhen=m.value.trim()))
+        out.add(CampaignEvent(label=cleanEventLabel(text, m.range.first), whenMillis=whenMs, rawWhen=m.value.trim()))
     }
     return out
 }
